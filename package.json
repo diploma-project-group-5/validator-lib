@@ -37,7 +37,7 @@
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",
-    "@lad/contracts": "git+https://github.com/diploma-project-group-5/contracts.git#21a54578f92144d660a22553cfa45c7b0684dd00",
+    "@lad/contracts": "git+https://github.com/diploma-project-group-5/contracts.git#v0.2.0",
     "@types/node": "24.19.2",
     "@vitest/coverage-v8": "4.1.12",
     "eslint": "10.14.0",
