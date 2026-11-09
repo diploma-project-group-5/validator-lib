@@ -3,8 +3,8 @@
 import { parseInput } from './boundary/parse.js';
 import { buildLoad } from './domain/load.js';
 import { sortConflicts } from './domain/order.js';
-import { checkRules, modelOf } from './domain/rules.js';
-import type { Meta, Model, ValidationOutcome } from './domain/types.js';
+import { evaluate, modelOf } from './domain/rules.js';
+import type { Conflict, Meta, Model, ValidationInput, ValidationOutcome } from './domain/types.js';
 import { CONTRACTS_VERSION } from './generated/contracts-version.js';
 import { VALIDATOR_VERSION } from './version.js';
 
@@ -13,11 +13,26 @@ export interface ValidateOptions {
   readonly max_conflicts?: number;
 }
 
-const meta = (model: Model | null): Meta => ({
+export type CheckedOutcome = Exclude<ValidationOutcome, { readonly status: 'INVALID_INPUT' }>;
+
+export const meta = (model: Model | null): Meta => ({
   validator_version: VALIDATOR_VERSION,
   contracts_version: CONTRACTS_VERSION,
   model,
 });
+
+/** The full outcome of an input that passed the boundary, plus the violation count behind each conflict. */
+export function outcomeOf(input: ValidationInput): { outcome: CheckedOutcome; counts: Map<string, number> } {
+  const load = buildLoad(input);
+  const { conflicts, counts } = evaluate(input);
+  const all: Conflict[] = sortConflicts(conflicts);
+  const m = meta(modelOf(input));
+  const outcome: CheckedOutcome =
+    all.length === 0
+      ? { status: 'ACCEPTED', conflicts: [], conflicts_total: 0, load, meta: m }
+      : { status: 'REJECTED', conflicts: all, conflicts_total: all.length, load, meta: m };
+  return { outcome, counts };
+}
 
 export function validate(raw: unknown, opts: ValidateOptions = {}): ValidationOutcome {
   const cap = opts.max_conflicts;
@@ -27,11 +42,7 @@ export function validate(raw: unknown, opts: ValidateOptions = {}): ValidationOu
   }
   const parsed = parseInput(raw);
   if (!parsed.ok) return { status: 'INVALID_INPUT', issues: parsed.issues, meta: meta(null) };
-  const input = parsed.value;
-  const load = buildLoad(input);
-  const all = sortConflicts(checkRules(input));
-  const m = meta(modelOf(input));
-  if (all.length === 0) return { status: 'ACCEPTED', conflicts: [], conflicts_total: 0, load, meta: m };
-  const conflicts = cap === undefined ? all : all.slice(0, cap);
-  return { status: 'REJECTED', conflicts, conflicts_total: all.length, load, meta: m };
+  const { outcome } = outcomeOf(parsed.value);
+  if (outcome.status === 'ACCEPTED' || cap === undefined) return outcome;
+  return { ...outcome, conflicts: outcome.conflicts.slice(0, cap) };
 }

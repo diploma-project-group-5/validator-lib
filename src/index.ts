@@ -1,3 +1,4 @@
+export { newConflicts } from './compare.js';
 export { dayLoad } from './domain/capacity.js';
 export { RULES } from './domain/rules.js';
 export { CONTRACTS_VERSION } from './generated/contracts-version.js';

@@ -36,12 +36,30 @@ export interface CurriculumRow {
   readonly teacher_id: string;
   readonly hours: number;
 }
+/** substitution: a substitute teacher, exempt from teacher_not_in_plan ("не за фахом", spec §04). */
+export type LessonOrigin = 'plan' | 'substitution';
 export interface Lesson {
   readonly class_id: string;
   readonly day: number;
   readonly lesson_no: number;
   readonly subject_id: string;
   readonly teacher_id: string;
+  readonly origin?: LessonOrigin;
+}
+/** A template lesson not held this week (ADR 2026-11-09-validator-lib-substitution-check). */
+export type NotHeldKind = 'self_study' | 'cancelled' | 'holiday';
+export interface NotHeld {
+  readonly class_id: string;
+  readonly day: number;
+  readonly lesson_no: number;
+  readonly subject_id: string;
+  readonly kind: NotHeldKind;
+}
+/** A teacher absent on these lessons of a weekday of the checked week. */
+export interface Absence {
+  readonly teacher_id: string;
+  readonly day: number;
+  readonly lesson_nos: readonly number[];
 }
 export interface DayFormat {
   readonly class_id: string;
@@ -64,7 +82,14 @@ export interface Snapshot {
 export interface ValidationInput {
   readonly schema_version: '1.0';
   readonly snapshot: Snapshot;
-  readonly timetable: { readonly lessons: readonly Lesson[]; readonly day_formats: readonly DayFormat[] };
+  readonly timetable: {
+    readonly lessons: readonly Lesson[];
+    readonly day_formats: readonly DayFormat[];
+    readonly not_held?: readonly NotHeld[];
+  };
+  readonly absences?: readonly Absence[];
+  /** Weekdays of the checked week that are holidays: removed from school_days, their lessons are not_held. */
+  readonly holidays?: readonly number[];
 }
 
 /** Registry order is the sort order of conflicts (see rules/registry.ts). */
@@ -155,7 +180,11 @@ export type IssueCode =
   | 'unknown_reference'
   | 'duplicate_row'
   | 'kind_capacity_mismatch'
-  | 'unsupported_version';
+  | 'unsupported_version'
+  | 'requires_absences'
+  | 'requires_holidays'
+  | 'not_held_day'
+  | 'duplicate_slot';
 export interface InputIssue {
   readonly part: IssuePart;
   readonly code: IssueCode;

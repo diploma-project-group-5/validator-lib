@@ -48,6 +48,40 @@ const outcome = validate(input, { max_conflicts: 200 });
 | `capacity_exceeded` | місткість дня: 1.1 — паспорт; 1.2 — окремо `seats` і `passport` |
 | `no_shelter_in_person` | лише 1.2: предмет «не в укритті» в очний день |
 
+## Перевірка заміни (етап 2)
+
+ADR `2026-11-09-validator-lib-substitution-check`. Тиждень із накладками збирає `timetable-service` (власник сутності
+«Заміна»); бібліотека не знає дат і видів накладок, лише три необов'язкові поля входу:
+
+| Поле | Що означає | Як рахується |
+|---|---|---|
+| `lessons[].origin: "substitution"` | урок веде вчитель на заміні | `teacher_not_in_plan` не діє («не за фахом»); перенесений урок лишає `origin: "plan"` |
+| `timetable.not_held[]` (`self_study`, `cancelled`, `holiday`) | урок шаблону цього тижня не проводиться | рахується в годинах плану; `self_study` і `cancelled` тримають очний день; `self_study` займає слот класу |
+| `absences[]` (`teacher_id`, `day`, `lesson_nos`) | вчитель відсутній на цих уроках | його урок у такому слоті — `teacher_unavailable_day` з `lesson_no` |
+| `holidays[]` | дні тижня, прибрані з `school_days` як канікули | уроки шаблону цих днів — `not_held{kind: "holiday"}` |
+
+Кожна позначка несе причину, інакше `INVALID_INPUT`: урок заміни, `self_study` і `cancelled` — лише коли **вчитель
+за планом відсутній саме в цьому слоті** (`requires_absences`); `holiday` — лише для дня з `holidays`
+(`requires_holidays`). Так випадкова позначка у вході `:publish` не вимкне перевірку плану.
+
+`:approve` передає обидва тижні в одну функцію: без цієї заміни (`baseline`, з погодженими накладками тижня) і з нею
+(`effective`), на тому самому знімку.
+
+```ts
+import { newConflicts } from '@lad/validator-lib';
+const r = newConflicts(baselineInput, effectiveInput);
+if (r.status === 'INVALID_INPUT') { /* 500: r.week, r.issues */ }
+else if (r.added.length > 0) { /* 409 conflicts[] = r.added */ }
+else { /* погодити; r.baseline.conflicts — попередження */ }
+```
+
+Новий — конфлікт, якого не було, або той самий, але гірший: для місткості, тижневого ліміту й годин плану — більше
+значення (далі від норми), для решти — більше порушень за тим самим конфліктом. Полегшення не блокується.
+
+Спільні вектори — `contracts/vectors/substitution/*.json`: `given` (шаблон, накладки, відсутності, свята) → `input`
+(очікуваний тиждень, ним перевіряють `effectiveWeek` у timetable) → `expected` (вердикт бібліотеки). Пари для
+`newConflicts` — `contracts/vectors/substitution-approve/*.json`.
+
 Формула місткості (розділ 04): учні очних класів + непедагогічний персонал + вчителі з хоча б одним очним уроком
 (кожен раз на день) ≤ паспорт; для 1.2 ще учні очних класів ≤ навчальні місця. Правила якості `solver`
 (обмеження рядка на день, компактність) не перевіряються.
@@ -75,10 +109,11 @@ lad-validate --version
 `dist/` не зберігається в git. Під час встановлення з git npm сам виконує скрипт `prepare`
 (`npm run build`: синхронізація схем і збірка TypeScript), тож у `node_modules` потрапляє готовий `dist/`.
 CI перевіряє це кроком «Package is importable after install».
+Режим перевірки заміни (`newConflicts`, поля `origin`, `not_held`, `absences`, `holidays`) — з `#v0.2.0`.
 
 ## Розробка
 
-Потрібен Node 24. `@lad/contracts` підключено git-залежністю на тег (`v0.2.0`); lock-файл фіксує коміт.
+Потрібен Node 24. `@lad/contracts` підключено git-залежністю на тег (`v0.3.0`); lock-файл фіксує коміт.
 
 ```bash
 npm install
