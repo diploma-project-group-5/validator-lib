@@ -63,6 +63,19 @@ lad-validate --version
 - Зламаний рядок дає `INVALID_INPUT`, обробка триває. Рядок понад 8 МіБ відхиляється без розбору.
 - Коди виходу: 0 — усе оброблено; 1 — `--fail-on-reject` і є не `ACCEPTED`; 2 — помилка аргументів; 3 — внутрішня помилка.
 
+## Підключення в сервісі
+
+Пакета в npm-реєстрі немає, тож сервіс (`timetable-service`) підключає бібліотеку git-залежністю на тег,
+так само як сама бібліотека підключає `@lad/contracts`:
+
+```json
+"@lad/validator-lib": "git+https://github.com/diploma-project-group-5/validator-lib.git#v0.1.0"
+```
+
+`dist/` не зберігається в git. Під час встановлення з git npm сам виконує скрипт `prepare`
+(`npm run build`: синхронізація схем і збірка TypeScript), тож у `node_modules` потрапляє готовий `dist/`.
+CI перевіряє це кроком «Package is importable after install».
+
 ## Розробка
 
 Потрібен Node 24. `@lad/contracts` підключено git-залежністю на тег (`v0.2.0`); lock-файл фіксує коміт.
