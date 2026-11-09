@@ -1,0 +1,41 @@
+name: ci
+
+on:
+  push:
+    branches: [develop, main, "feat/**", "fix/**"]
+  pull_request:
+    branches: [develop, main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7, resolved 2026-11-08
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      # @lad/contracts is a git dependency pinned to a commit; npm records GitHub as ssh in the
+      # lockfile, and the repo is public, so fetch it over https without a key.
+      - name: Fetch git dependencies over https
+        run: git config --global url."https://github.com/".insteadOf "ssh://git@github.com/"
+      - name: Install (locked)
+        run: npm ci
+      - name: Lint, typecheck, tests with coverage, build
+        run: npm run check
+      - name: CLI smoke on the built package
+        run: |
+          node dist/cli/main.js --version
+          echo '{"case_id":"x","input":{}}' | node dist/cli/main.js | grep -q '"INVALID_INPUT"'
+      - name: Dependency audit
+        run: npm audit --omit=dev --audit-level=high
