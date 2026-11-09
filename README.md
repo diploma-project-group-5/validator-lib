@@ -109,10 +109,11 @@ lad-validate --version
 `dist/` не зберігається в git. Під час встановлення з git npm сам виконує скрипт `prepare`
 (`npm run build`: синхронізація схем і збірка TypeScript), тож у `node_modules` потрапляє готовий `dist/`.
 CI перевіряє це кроком «Package is importable after install».
+Режим перевірки заміни (`newConflicts`, поля `origin`, `not_held`, `absences`, `holidays`) — з `#v0.2.0`.
 
 ## Розробка
 
-Потрібен Node 24. `@lad/contracts` підключено git-залежністю на тег (`v0.2.0`); lock-файл фіксує коміт.
+Потрібен Node 24. `@lad/contracts` підключено git-залежністю на тег (`v0.3.0`); lock-файл фіксує коміт.
 
 ```bash
 npm install
