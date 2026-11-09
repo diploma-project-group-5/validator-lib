@@ -21,6 +21,7 @@
   ],
   "scripts": {
     "sync-schemas": "node scripts/sync-schemas.mjs",
+    "prepare": "npm run build",
     "prelint": "npm run sync-schemas",
     "pretypecheck": "npm run sync-schemas",
     "pretest": "npm run sync-schemas",

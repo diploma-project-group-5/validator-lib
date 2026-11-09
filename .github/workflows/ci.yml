@@ -37,5 +37,15 @@ jobs:
         run: |
           node dist/cli/main.js --version
           echo '{"case_id":"x","input":{}}' | node dist/cli/main.js | grep -q '"INVALID_INPUT"'
+      # Services install the library as a git dependency: npm runs `prepare` and packs `files`.
+      # npm pack goes through the same steps, so an importable tarball means a working git install.
+      - name: Package is importable after install
+        run: |
+          tarball="$PWD/$(npm pack --silent | tail -n 1)"
+          consumer="$(mktemp -d)"
+          cd "$consumer"
+          npm init -y > /dev/null
+          npm install --no-audit --no-fund "$tarball"
+          node -e "import('@lad/validator-lib').then((m) => { if (typeof m.validate !== 'function') process.exit(1); console.log('validator', m.VALIDATOR_VERSION); })"
       - name: Dependency audit
         run: npm audit --omit=dev --audit-level=high
