@@ -1,0 +1,48 @@
+{
+  "name": "@lad/validator-lib",
+  "version": "0.1.0",
+  "private": true,
+  "description": "«Лад»: незалежна перевірка розкладу (бібліотека + CLI JSONL)",
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "bin": {
+    "lad-validate": "dist/cli/main.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "sync-schemas": "node scripts/sync-schemas.mjs",
+    "pretypecheck": "npm run sync-schemas",
+    "pretest": "npm run sync-schemas",
+    "prebuild": "npm run sync-schemas",
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "test": "vitest run --coverage",
+    "test:watch": "vitest",
+    "check": "npm run lint && npm run typecheck && npm test && npm run build"
+  },
+  "dependencies": {
+    "ajv": "8.20.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "@lad/contracts": "git+https://github.com/diploma-project-group-5/contracts.git#21a54578f92144d660a22553cfa45c7b0684dd00",
+    "@types/node": "24.19.2",
+    "@vitest/coverage-v8": "4.1.12",
+    "eslint": "10.14.0",
+    "fast-check": "4.10.2",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.72.1",
+    "vitest": "4.1.12"
+  }
+}
