@@ -1,6 +1,6 @@
 {
   "name": "@lad/validator-lib",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "«Лад»: незалежна перевірка розкладу (бібліотека + CLI JSONL)",
   "type": "module",
@@ -37,7 +37,7 @@
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",
-    "@lad/contracts": "git+https://github.com/diploma-project-group-5/contracts.git#v0.2.0",
+    "@lad/contracts": "git+https://github.com/diploma-project-group-5/contracts.git#35138c73c32230d905503798ed34af8133465330",
     "@types/node": "24.19.2",
     "@vitest/coverage-v8": "4.1.12",
     "eslint": "10.14.0",

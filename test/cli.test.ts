@@ -2,6 +2,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { exitCode, MAX_LINE_BYTES, parseArgs, runLines, versionLine } from '../src/cli/run.js';
+import { VALIDATOR_VERSION } from '../src/version.js';
 import { input } from './support/school.js';
 
 const run = async (lines: string[], opts = {}) => {
@@ -67,7 +68,7 @@ describe('arguments and exit codes', () => {
   it('--version prints both versions', () => {
     expect(JSON.parse(versionLine())).toEqual({
       name: '@lad/validator-lib',
-      validator_version: '0.1.0',
+      validator_version: VALIDATOR_VERSION,
       contracts_version: expect.any(String) as unknown,
     });
   });

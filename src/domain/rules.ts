@@ -6,8 +6,13 @@
 //  - a lesson of an unknown subject skips the curriculum and no-shelter rules;
 //  - a lesson of an unknown teacher skips the teacher rules, but still counts in capacity;
 //  - a lesson on a non-school day skips the daily rules, but counts in weekly totals and plan hours.
+//
+// Effective week with substitutions (ADR 2026-11-09-validator-lib-substitution-check): a not_held entry has
+// no teacher, so it takes part only in class rules — self_study and cancelled keep an in-person day held (8),
+// self_study occupies the class slot (9), every kind counts towards plan hours (16). A lesson whose teacher
+// is absent in that slot is teacher_unavailable_day with lesson_no (12); origin=substitution exempts 15.
 import { dayLoad } from './capacity.js';
-import type { CapacityAlert, CapacityPassport, Conflict, ConflictRule, Lesson, Model, ValidationInput } from './types.js';
+import type { CapacityAlert, CapacityPassport, Conflict, ConflictRule, Lesson, Model, NotHeld, ValidationInput } from './types.js';
 
 export const RULES: readonly ConflictRule[] = [
   'class_not_active',
@@ -59,16 +64,22 @@ export function formatsOf(input: ValidationInput): Map<string, boolean> {
 export const isInPerson = (formats: Map<string, boolean>, class_id: string, day: number): boolean =>
   formats.get(key(class_id, day)) ?? false;
 
-export function checkRules(input: ValidationInput): Conflict[] {
+export const checkRules = (input: ValidationInput): Conflict[] => evaluate(input).conflicts;
+
+/**
+ * Conflicts, each reported once, and how many violations stand behind each one (key: JSON of the conflict).
+ * The outcome keeps one conflict per place; the count lets newConflicts see a worse week whose conflicts
+ * look the same, e.g. a second lesson on a teacher's unavailable day.
+ */
+export function evaluate(input: ValidationInput): { conflicts: Conflict[]; counts: Map<string, number> } {
   const { snapshot, timetable } = input;
   const out: Conflict[] = [];
-  const once = new Set<string>();
-  const add = (c: Conflict): void => {
+  const counts = new Map<string, number>();
+  const add = (c: Conflict, weight = 1): void => {
     const k = JSON.stringify(c);
-    if (!once.has(k)) {
-      once.add(k);
-      out.push(c);
-    }
+    const seen = counts.get(k);
+    if (seen === undefined) out.push(c);
+    counts.set(k, (seen ?? 0) + weight);
   };
 
   const classes = new Map(snapshot.classes.map((c) => [c.id, c]));
@@ -96,6 +107,19 @@ export function checkRules(input: ValidationInput): Conflict[] {
   }
   const daily = known.filter((l) => schoolDays.has(l.day));
 
+  // not_held: references only (the boundary has proven the day matches the kind).
+  const notHeld: NotHeld[] = []; // class known
+  for (const n of timetable.not_held ?? []) {
+    if (!classes.has(n.class_id)) {
+      add({ rule: 'class_not_active', class_id: n.class_id });
+      continue;
+    }
+    if (!subjects.has(n.subject_id)) add({ rule: 'subject_not_active', class_id: n.class_id, subject_id: n.subject_id });
+    notHeld.push(n);
+  }
+  // Holidays lie on non-school days only (boundary), so the daily rules below never see them.
+  const absentSlots = new Set((input.absences ?? []).flatMap((a) => a.lesson_nos.map((no) => key(a.teacher_id, a.day, no))));
+
   // 6-8: day formats of every active class x school day.
   const formatCount = new Map<string, number>();
   for (const f of timetable.day_formats) {
@@ -111,7 +135,7 @@ export function checkRules(input: ValidationInput): Conflict[] {
     formatCount.set(k, (formatCount.get(k) ?? 0) + 1);
   }
   const lessonsPerClassDay = new Map<string, number>();
-  for (const l of daily) {
+  for (const l of [...daily, ...notHeld]) {
     const k = key(l.class_id, l.day);
     lessonsPerClassDay.set(k, (lessonsPerClassDay.get(k) ?? 0) + 1);
   }
@@ -130,6 +154,9 @@ export function checkRules(input: ValidationInput): Conflict[] {
   // 9-10: overlaps.
   const classSlots = new Map<string, number>();
   const teacherSlots = new Map<string, number>();
+  for (const n of notHeld) {
+    if (n.kind === 'self_study') classSlots.set(key(n.class_id, n.day, n.lesson_no), 1); // the class stays in its slot
+  }
   for (const l of daily) {
     const cs = key(l.class_id, l.day, l.lesson_no);
     classSlots.set(cs, (classSlots.get(cs) ?? 0) + 1);
@@ -144,6 +171,7 @@ export function checkRules(input: ValidationInput): Conflict[] {
 
   // 11-13: teachers (one format per day, unavailable days, weekly limit).
   const teacherFormats = new Map<string, Set<boolean>>();
+  const teacherDayLessons = new Map<string, number>(); // weight of teacher_mixed_format
   const weekly = new Map<string, number>();
   for (const l of known) {
     const t = teachers.get(l.teacher_id);
@@ -151,16 +179,20 @@ export function checkRules(input: ValidationInput): Conflict[] {
     weekly.set(t.id, (weekly.get(t.id) ?? 0) + 1);
     if (!schoolDays.has(l.day)) continue;
     if (t.unavailable_days.includes(l.day)) add({ rule: 'teacher_unavailable_day', teacher_id: t.id, day: l.day });
+    if (absentSlots.has(key(t.id, l.day, l.lesson_no))) {
+      add({ rule: 'teacher_unavailable_day', teacher_id: t.id, day: l.day, lesson_no: l.lesson_no });
+    }
     if (!formats.has(key(l.class_id, l.day))) continue; // day_format_missing already reports it
     const k = key(t.id, l.day);
     const seen = teacherFormats.get(k) ?? new Set<boolean>();
     seen.add(isInPerson(formats, l.class_id, l.day));
     teacherFormats.set(k, seen);
+    teacherDayLessons.set(k, (teacherDayLessons.get(k) ?? 0) + 1);
   }
   for (const [k, seen] of teacherFormats) {
     if (seen.size > 1) {
       const [teacher_id = '', day = ''] = k.split('\u0000');
-      add({ rule: 'teacher_mixed_format', teacher_id, day: Number(day) });
+      add({ rule: 'teacher_mixed_format', teacher_id, day: Number(day) }, teacherDayLessons.get(k) ?? 1);
     }
   }
   for (const t of snapshot.teachers) {
@@ -182,6 +214,15 @@ export function checkRules(input: ValidationInput): Conflict[] {
     if (teachers.has(l.teacher_id) && l.teacher_id !== row.teacher_id && !planTeacherExempt(l)) {
       add({ rule: 'teacher_not_in_plan', class_id: l.class_id, subject_id: l.subject_id, teacher_id: l.teacher_id });
     }
+  }
+  for (const n of notHeld) {
+    if (!subjects.has(n.subject_id)) continue;
+    const pk = key(n.class_id, n.subject_id);
+    if (!rows.has(pk)) {
+      add({ rule: 'lesson_not_in_plan', class_id: n.class_id, subject_id: n.subject_id });
+      continue;
+    }
+    perPair.set(pk, (perPair.get(pk) ?? 0) + 1); // the hour is in the plan; this week it is not held
   }
   for (const r of snapshot.rows) {
     const n = perPair.get(key(r.class_id, r.subject_id)) ?? 0;
@@ -213,14 +254,10 @@ export function checkRules(input: ValidationInput): Conflict[] {
       }
     }
   }
-  return out;
+  return { conflicts: out, counts };
 }
 
-/**
- * Stage-2 extension point: a substitution lesson may be taught by a teacher outside the plan
- * ("не за фахом", spec §04). There are no substitutions in stage 1, so nothing is exempt.
- */
-// eslint-disable-next-line @typescript-eslint/no-unused-vars -- the stage-2 hook takes the lesson
-function planTeacherExempt(_lesson: Lesson): boolean {
-  return false;
+/** A substitute may teach outside the plan ("не за фахом", spec §04); a moved lesson keeps origin=plan. */
+function planTeacherExempt(lesson: Lesson): boolean {
+  return lesson.origin === 'substitution';
 }
