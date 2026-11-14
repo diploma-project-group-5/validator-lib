@@ -138,6 +138,7 @@ export function evaluate(input: ValidationInput): { conflicts: Conflict[]; count
   const lessonsPerClassDay = new Map<string, number>();
   for (const l of [...daily, ...notHeld]) {
     const k = key(l.class_id, l.day);
+    // Stryker disable next-line ArithmeticOperator: equivalent, only `=== 0` is read below and -n is non-zero too
     lessonsPerClassDay.set(k, (lessonsPerClassDay.get(k) ?? 0) + 1);
   }
   for (const c of snapshot.classes) {

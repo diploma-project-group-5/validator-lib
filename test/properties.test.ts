@@ -51,15 +51,19 @@ describe('properties', () => {
 });
 
 describe('/load reasons of remote days', () => {
-  /** Classes linked on one day by a shared teacher, transitively (union-find; the library uses a search). */
+  /**
+   * Classes linked on one day by a shared teacher, transitively (union-find; the library uses a search).
+   * Like teacher_mixed_format, a teacher missing from the snapshot links nothing.
+   */
   const groupOf = (school: ValidationInput, class_id: string, day: number): Set<string> => {
+    const known = new Set(school.snapshot.teachers.map((t) => t.id));
     const parent = new Map<string, string>();
     const find = (x: string): string => {
       const p = parent.get(x) ?? x;
       return p === x ? x : find(p);
     };
     const byTeacher = new Map<string, string>();
-    for (const l of school.timetable.lessons.filter((x) => x.day === day)) {
+    for (const l of school.timetable.lessons.filter((x) => x.day === day && known.has(x.teacher_id))) {
       const other = byTeacher.get(l.teacher_id);
       if (other === undefined) byTeacher.set(l.teacher_id, l.class_id);
       else parent.set(find(l.class_id), find(other));

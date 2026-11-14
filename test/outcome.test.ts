@@ -12,6 +12,7 @@ import {
   VALIDATOR_VERSION,
   validate,
   type Conflict,
+  type DayFormat,
   type Lesson,
   type Snapshot,
   type ValidationInput,
@@ -29,8 +30,17 @@ const outcomeSchema = ajv.compile(load('validator/validation.outcome.v1.json'));
 const conflictEnum = (load('events/conflict.v1.json') as { properties: { rule: { enum: string[] } } }).properties.rule.enum;
 
 const noisy = () => input({ snapshot: { capacity: { passport: 40 } }, day_formats: dayFormats().slice(0, 7) });
-/** One school day, classes of 10 students, no staff, an empty plan: hand-checked loads for the /load reasons. */
-const tiny = (o: { lessons: Lesson[]; formats: Record<string, boolean>; kind?: Snapshot['kind']; capacity: Snapshot['capacity'] }): ValidationInput => ({
+/**
+ * One school day, classes of 10 students, no staff, an empty plan: hand-checked loads for the /load reasons.
+ * `formats` gives one record per class; `extra` adds format records (duplicates) and classes without any record.
+ */
+const tiny = (o: {
+  lessons: Lesson[];
+  formats: Record<string, boolean>;
+  kind?: Snapshot['kind'];
+  capacity: Snapshot['capacity'];
+  extra?: { formats?: DayFormat[]; classes?: string[] };
+}): ValidationInput => ({
   schema_version: '1.0',
   snapshot: {
     kind: o.kind ?? 'main',
@@ -38,7 +48,7 @@ const tiny = (o: { lessons: Lesson[]; formats: Record<string, boolean>; kind?: S
     lessons_per_day: 6,
     staff: 0,
     capacity: o.capacity,
-    classes: Object.keys(o.formats).map((id) => ({ id, students: 10, priority: false })),
+    classes: [...Object.keys(o.formats), ...(o.extra?.classes ?? [])].map((id) => ({ id, students: 10, priority: false })),
     subjects: [
       { id: 's-x', priority_area: false, no_shelter: false },
       { id: 's-ns', priority_area: false, no_shelter: true },
@@ -46,8 +56,17 @@ const tiny = (o: { lessons: Lesson[]; formats: Record<string, boolean>; kind?: S
     teachers: ['t1', 't2', 't3', 't4'].map((id) => ({ id, weekly_limit: 10, unavailable_days: [] })),
     rows: [],
   },
-  timetable: { lessons: o.lessons, day_formats: Object.entries(o.formats).map(([class_id, in_person]) => ({ class_id, day: 1, in_person })) },
+  timetable: {
+    lessons: o.lessons,
+    day_formats: [...Object.entries(o.formats).map(([class_id, in_person]) => ({ class_id, day: 1, in_person })), ...(o.extra?.formats ?? [])],
+  },
 });
+/** Day-1 reasons by class (formats in person / remote are in the class_days). Throws on INVALID_INPUT. */
+const reasonsOf = (i: ValidationInput): Record<string, string> => {
+  const o = validate(i);
+  if (o.status === 'INVALID_INPUT') throw new Error(JSON.stringify(o.issues));
+  return Object.fromEntries(o.load.class_days.map((cd) => [cd.class_id, `${cd.in_person ? 'in_person' : 'remote'}:${cd.reason}`]));
+};
 const chain = (passport: number): ValidationInput =>
   tiny({
     lessons: [lesson('a', 1, 1, 's-x', 't1'), lesson('b', 1, 2, 's-x', 't1'), lesson('b', 1, 3, 's-x', 't2'), lesson('c', 1, 1, 's-x', 't2'), lesson('d', 1, 1, 's-x', 't4')],
@@ -216,6 +235,77 @@ describe('load report', () => {
     const reasons = (o: typeof m11): Record<string, string> => Object.fromEntries(o.load.class_days.map((cd) => [cd.class_id, cd.reason]));
     expect(reasons(m12)).toEqual({ a: 'no_shelter', b: 'no_shelter', c: 'capacity_available' });
     expect(reasons(m11)).toEqual({ a: 'capacity_available', b: 'capacity_available', c: 'capacity_available' });
+  });
+
+  it('model 1.2: the seats and passport conditions of the group are checked separately', () => {
+    // a and b share t1, both remote, math only. Group: seats = 20 students; passport = 20 + t1 = 21.
+    const pair = [lesson('a', 1, 1, 's-x', 't1'), lesson('b', 1, 2, 's-x', 't1')];
+    const at = (seats: number, passport: number) =>
+      reasonsOf(tiny({ lessons: pair, formats: { a: false, b: false }, kind: 'alert', capacity: { seats, passport } })).a;
+    expect(at(20, 1000)).toBe('remote:capacity_available');
+    expect(at(19, 1000)).toBe('remote:day_limit');
+    expect(at(1000, 21)).toBe('remote:capacity_available');
+    expect(at(1000, 20)).toBe('remote:day_limit');
+  });
+
+  it('a class with lessons but no format record is remote, explained and part of the teacher group', () => {
+    // b shares t1 with a and has no day_formats record (day_format_missing): treated as remote.
+    // Group {a, b}: 20 students + t1 = 21.
+    const at = (passport: number) =>
+      reasonsOf(
+        tiny({
+          lessons: [lesson('a', 1, 1, 's-x', 't1'), lesson('b', 1, 2, 's-x', 't1')],
+          formats: { a: false },
+          capacity: { passport },
+          extra: { classes: ['b'] },
+        }),
+      );
+    expect(at(21)).toEqual({ a: 'remote:capacity_available', b: 'remote:capacity_available' });
+    expect(at(20)).toEqual({ a: 'remote:day_limit', b: 'remote:day_limit' });
+  });
+
+  it('duplicate format records, remote and in person, make an in-person day (conservative for capacity)', () => {
+    const r = reasonsOf(
+      tiny({
+        lessons: [lesson('a', 1, 1, 's-x', 't1'), lesson('b', 1, 2, 's-x', 't2')],
+        formats: { a: false, b: false },
+        capacity: { passport: 1000 },
+        extra: { formats: [{ class_id: 'a', day: 1, in_person: true }] },
+      }),
+    );
+    expect(r).toEqual({ a: 'in_person:capacity_available', b: 'remote:capacity_available' });
+  });
+
+  it('model 1.2: an in-person class of the group with a no-shelter lesson keeps a remote class remote (on purpose)', () => {
+    // b is in person with PE while sharing t1 with remote a: invalid (teacher_mixed_format, no_shelter_in_person).
+    // The group is built over all classes of the day, in person too: a cannot come in person with b as it is.
+    const r = reasonsOf(
+      tiny({
+        lessons: [lesson('a', 1, 1, 's-x', 't1'), lesson('b', 1, 2, 's-x', 't1'), lesson('b', 1, 3, 's-ns', 't2')],
+        formats: { a: false, b: true },
+        kind: 'alert',
+        capacity: { seats: 1000, passport: 1000 },
+      }),
+    );
+    expect(r.a).toBe('remote:no_shelter');
+  });
+
+  it('a remote class without lessons is no_lessons, whatever the rest of the day', () => {
+    const r = reasonsOf(tiny({ lessons: [lesson('b', 1, 1, 's-x', 't1'), lesson('c', 1, 2, 's-x', 't1')], formats: { a: false, b: false, c: false }, capacity: { passport: 0 } }));
+    expect(r).toEqual({ a: 'remote:no_lessons', b: 'remote:day_limit', c: 'remote:day_limit' });
+  });
+
+  it('lessons of an inactive class do not bridge a teacher group', () => {
+    // z is not in the snapshot (class_not_active). Through z, t1 and t2 would link a with b.
+    // a alone in person: 10 + t1 = 11; with b it would be 20 + t1 + t2 = 22.
+    const r = reasonsOf(
+      tiny({
+        lessons: [lesson('a', 1, 1, 's-x', 't1'), lesson('z', 1, 2, 's-x', 't1'), lesson('z', 1, 3, 's-x', 't2'), lesson('b', 1, 1, 's-x', 't2')],
+        formats: { a: false, b: false },
+        capacity: { passport: 11 },
+      }),
+    );
+    expect(r.a).toBe('remote:capacity_available');
   });
 
   it('in-person days keep their reasons', () => {

@@ -3,6 +3,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { validate, type Conflict, type CurriculumRow, type Teacher, type ValidationOutcome } from '../src/index.js';
+import { checkRules } from '../src/domain/rules.js';
 import { dayFormats, input, lesson, lessons } from './support/school.js';
 
 const conflicts = (o: ValidationOutcome): readonly Conflict[] => {
@@ -215,5 +216,31 @@ describe('day formats and not_held edge cases', () => {
     const slot = { class_id: 'c-1', day: 6, lesson_no: 1, subject_id: 's-art', kind: 'holiday' };
     const o = validate({ ...base, holidays: [6], timetable: { ...base.timetable, not_held: [slot] } });
     expect(conflicts(o)).toEqual([{ rule: 'lesson_not_in_plan', class_id: 'c-1', subject_id: 's-art' }]);
+  });
+});
+
+// Cascade suppression (rules.ts header): one cause, one report. Pinned by mutation testing.
+describe('cascade suppression', () => {
+  it('lessons of an unknown teacher in one slot are teacher_not_active, not teacher_double_booked', () => {
+    // c-1 math (slot 1) and c-2 math (moved to slot 1) on day 1, both with t-gone.
+    const ls = lessons().map((l, i) => (i === 0 ? { ...l, teacher_id: 't-gone' } : i === 5 ? { ...l, lesson_no: 1, teacher_id: 't-gone' } : l));
+    expect(conflicts(validate(input({ lessons: ls })))).toEqual([{ rule: 'teacher_not_active', teacher_id: 't-gone' }]);
+  });
+
+  it('lessons on a non-school day skip the daily rules (no double booking on a Saturday)', () => {
+    // c-1 math of days 4 and 5 both moved to day 6, slot 1: same class, same teacher, same slot.
+    const ls = lessons().map((l, i) => (i === 3 || i === 4 ? { ...l, day: 6 } : l));
+    expect(rules(validate(input({ lessons: ls })))).toEqual(['day_not_school_day', 'in_person_without_lessons']);
+  });
+
+  it('a lesson of a class-day without a format is not teacher_mixed_format (day_format_missing says it)', () => {
+    // t-1 teaches c-1 in person and c-2 on day 1; c-2 has no format record for day 1.
+    const o = validate(input({ day_formats: dayFormats().filter((f) => !(f.class_id === 'c-2' && f.day === 1)) }));
+    expect(conflicts(o)).toEqual([{ rule: 'day_format_missing', class_id: 'c-2', day: 1 }]);
+  });
+
+  it('checkRules returns the conflicts of the rules', () => {
+    const ls = lessons().map((l, i) => (i === 0 ? { ...l, teacher_id: 't-gone' } : l));
+    expect(checkRules(input({ lessons: ls }))).toEqual([{ rule: 'teacher_not_active', teacher_id: 't-gone' }]);
   });
 });

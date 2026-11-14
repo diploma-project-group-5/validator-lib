@@ -55,7 +55,8 @@ export const validSchool = fc
 
 /**
  * An arbitrary school for the /load reasons, valid at the boundary but not necessarily by the rules:
- * teachers shared across classes, any day formats, no-shelter subjects, a capacity from tight to roomy.
+ * teachers shared across classes (and now and then one unknown to the snapshot), any day formats,
+ * no-shelter subjects, a capacity from tight to roomy.
  */
 export const loadSchool = fc
   .record({
@@ -78,7 +79,9 @@ export const loadSchool = fc
       for (const day of schoolDays) {
         const i = c * 3 + day - 1;
         (plan[i] ?? []).forEach(([t, ns], n) => {
-          ls.push({ class_id: `c-${String(c)}`, day, lesson_no: n + 1, subject_id: ns ? 's-1' : 's-0', teacher_id: `t-${String(t % teachers)}` });
+          // About one lesson in ten has a teacher missing from the snapshot (teacher_not_active).
+          const teacher_id = t % 10 === 9 ? 't-gone' : `t-${String(t % teachers)}`;
+          ls.push({ class_id: `c-${String(c)}`, day, lesson_no: n + 1, subject_id: ns ? 's-1' : 's-0', teacher_id });
         });
         fs.push({ class_id: `c-${String(c)}`, day, in_person: formats[i] ?? false });
       }
