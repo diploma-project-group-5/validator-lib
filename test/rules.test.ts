@@ -233,6 +233,13 @@ describe('cascade suppression', () => {
     expect(rules(validate(input({ lessons: ls })))).toEqual(['day_not_school_day', 'in_person_without_lessons']);
   });
 
+  it('a lesson on a non-school day skips the teacher rules (no unavailable-day report on a Saturday)', () => {
+    // c-1 math of day 4 (t-1) moved to day 6; t-1 is unavailable on day 6.
+    const ls = lessons().map((l, i) => (i === 3 ? { ...l, day: 6 } : l));
+    const teachers = input().snapshot.teachers.map((t: Teacher) => (t.id === 't-1' ? { ...t, unavailable_days: [6] } : t));
+    expect(rules(validate(input({ lessons: ls, snapshot: { teachers } })))).not.toContain('teacher_unavailable_day');
+  });
+
   it('a lesson of a class-day without a format is not teacher_mixed_format (day_format_missing says it)', () => {
     // t-1 teaches c-1 in person and c-2 on day 1; c-2 has no format record for day 1.
     const o = validate(input({ day_formats: dayFormats().filter((f) => !(f.class_id === 'c-2' && f.day === 1)) }));
