@@ -3,8 +3,8 @@
 import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
 
-import { validate } from '../src/index.js';
-import { validSchool } from './support/generators.js';
+import { validate, type Conflict, type ValidationInput } from '../src/index.js';
+import { loadSchool, validSchool } from './support/generators.js';
 import { dayFormats, input, lesson, lessons } from './support/school.js';
 
 describe('properties', () => {
@@ -47,6 +47,77 @@ describe('properties', () => {
     const after = validate(input({ lessons: extra }));
     if (before.status === 'INVALID_INPUT' || after.status === 'INVALID_INPUT') throw new Error('unexpected');
     expect(after.load.days[0]).toEqual(before.load.days[0]);
+  });
+});
+
+describe('/load reasons of remote days', () => {
+  /**
+   * Classes linked on one day by a shared teacher, transitively (union-find; the library uses a search).
+   * Like teacher_mixed_format, a teacher missing from the snapshot links nothing.
+   */
+  const groupOf = (school: ValidationInput, class_id: string, day: number): Set<string> => {
+    const known = new Set(school.snapshot.teachers.map((t) => t.id));
+    const parent = new Map<string, string>();
+    const find = (x: string): string => {
+      const p = parent.get(x) ?? x;
+      return p === x ? x : find(p);
+    };
+    const byTeacher = new Map<string, string>();
+    for (const l of school.timetable.lessons.filter((x) => x.day === day && known.has(x.teacher_id))) {
+      const other = byTeacher.get(l.teacher_id);
+      if (other === undefined) byTeacher.set(l.teacher_id, l.class_id);
+      else parent.set(find(l.class_id), find(other));
+    }
+    return new Set(school.snapshot.classes.map((c) => c.id).filter((id) => find(id) === find(class_id)));
+  };
+
+  it('a remote day is explained by what would happen if its teacher group came in person (metamorphic)', () => {
+    fc.assert(
+      fc.property(loadSchool, (school) => {
+        const o = validate(school);
+        if (o.status === 'INVALID_INPUT') throw new Error(JSON.stringify(o.issues));
+        const before = o.status === 'REJECTED' ? o.conflicts : [];
+        for (const cd of o.load.class_days) {
+          if (cd.in_person) continue;
+          expect(cd.reason).not.toBe('priority');
+          if (cd.lessons === 0) {
+            expect(cd.reason).toBe('no_lessons');
+            continue;
+          }
+          const g = groupOf(school, cd.class_id, cd.day);
+          const flipped = validate({
+            ...school,
+            timetable: {
+              ...school.timetable,
+              day_formats: school.timetable.day_formats.map((f) => (f.day === cd.day && g.has(f.class_id) ? { ...f, in_person: true } : f)),
+            },
+          });
+          if (flipped.status === 'INVALID_INPUT') throw new Error('unexpected');
+          const after = flipped.status === 'REJECTED' ? flipped.conflicts : [];
+          const onDay = (cs: readonly Conflict[], rule: Conflict['rule']) => cs.filter((c) => c.rule === rule && c.day === cd.day);
+          const noShelter = onDay(after, 'no_shelter_in_person').some((c) => c.class_id !== undefined && g.has(c.class_id));
+          const full = onDay(after, 'capacity_exceeded').length > 0;
+          expect(cd.reason).toBe(noShelter ? 'no_shelter' : full ? 'day_limit' : 'capacity_available');
+          if (cd.reason === 'capacity_available') {
+            // Bringing the group in person adds no teacher with two formats that day.
+            for (const c of onDay(after, 'teacher_mixed_format')) expect(before).toContainEqual(c);
+          }
+        }
+      }),
+      { numRuns: 200, seed: 20261109 },
+    );
+  });
+
+  it('the generator reaches every remote reason', () => {
+    const seen = new Set<string>();
+    fc.assert(
+      fc.property(loadSchool, (school) => {
+        const o = validate(school);
+        if (o.status !== 'INVALID_INPUT') for (const cd of o.load.class_days) if (!cd.in_person) seen.add(cd.reason);
+      }),
+      { numRuns: 200, seed: 20261109 },
+    );
+    expect([...seen].sort()).toEqual(['capacity_available', 'day_limit', 'no_lessons', 'no_shelter']);
   });
 });
 
