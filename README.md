@@ -122,13 +122,18 @@ lad-validate --version
 так само як сама бібліотека підключає `@lad/contracts`:
 
 ```json
-"@lad/validator-lib": "git+https://github.com/diploma-project-group-5/validator-lib.git#v0.1.0"
+"@lad/validator-lib": "git+https://github.com/diploma-project-group-5/validator-lib.git#v0.3.0"
 ```
 
 `dist/` не зберігається в git. Під час встановлення з git npm сам виконує скрипт `prepare`
 (`npm run build`: синхронізація схем і збірка TypeScript), тож у `node_modules` потрапляє готовий `dist/`.
 CI перевіряє це кроком «Package is importable after install».
 Режим перевірки заміни (`newConflicts`, поля `origin`, `not_held`, `absences`, `holidays`) — з `#v0.2.0`.
+З `#v0.3.0`:
+- схема входу перевіряється лінійно, а позиції поза `timetable` стоять у `issues` першими;
+- дистанційний день ніколи не має причини `priority`.
+
+Ці зміни зачіпають рішення `failed`/`rejected` і підписи в UI (див. «Причини формату дня»).
 
 ## Розробка
 
@@ -141,7 +146,7 @@ npm run mutation  # Stryker mutation testing, ~6 min; report in reports/mutation
 ```
 
 Мутаційне тестування (Stryker) обов'язкове перед релізом: CI запускає його на тегах `v*`, раз на тиждень і вручну
-(workflow `mutation`). Поріг — 80 % убитих мутантів, на 0.2.0 — 100 %. Еквівалентні мутанти позначено в коді
+(workflow `mutation`). Поріг — 80 % убитих мутантів, на 0.3.0 — 100 %. Еквівалентні мутанти позначено в коді
 коментарем `// Stryker disable … : причина`.
 
 Схеми копіюються з `@lad/contracts` у `src/generated/` (`npm run sync-schemas`, автоматично перед тестами й збіркою)
