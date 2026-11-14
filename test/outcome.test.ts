@@ -6,9 +6,19 @@ import { Ajv2020 } from 'ajv/dist/2020.js';
 import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
 
-import { CONTRACTS_VERSION, RULES, VALIDATOR_VERSION, validate, type Conflict, type ValidationOutcome } from '../src/index.js';
+import {
+  CONTRACTS_VERSION,
+  RULES,
+  VALIDATOR_VERSION,
+  validate,
+  type Conflict,
+  type Lesson,
+  type Snapshot,
+  type ValidationInput,
+  type ValidationOutcome,
+} from '../src/index.js';
 import { sortConflicts } from '../src/domain/order.js';
-import { dayFormats, input, lessons } from './support/school.js';
+import { dayFormats, input, lesson, lessons } from './support/school.js';
 
 const SCHEMAS = new URL('../src/generated/schemas/', import.meta.url);
 const load = (p: string): object => JSON.parse(readFileSync(new URL(p, SCHEMAS), 'utf8')) as object;
@@ -19,6 +29,31 @@ const outcomeSchema = ajv.compile(load('validator/validation.outcome.v1.json'));
 const conflictEnum = (load('events/conflict.v1.json') as { properties: { rule: { enum: string[] } } }).properties.rule.enum;
 
 const noisy = () => input({ snapshot: { capacity: { passport: 40 } }, day_formats: dayFormats().slice(0, 7) });
+/** One school day, classes of 10 students, no staff, an empty plan: hand-checked loads for the /load reasons. */
+const tiny = (o: { lessons: Lesson[]; formats: Record<string, boolean>; kind?: Snapshot['kind']; capacity: Snapshot['capacity'] }): ValidationInput => ({
+  schema_version: '1.0',
+  snapshot: {
+    kind: o.kind ?? 'main',
+    school_days: [1],
+    lessons_per_day: 6,
+    staff: 0,
+    capacity: o.capacity,
+    classes: Object.keys(o.formats).map((id) => ({ id, students: 10, priority: false })),
+    subjects: [
+      { id: 's-x', priority_area: false, no_shelter: false },
+      { id: 's-ns', priority_area: false, no_shelter: true },
+    ],
+    teachers: ['t1', 't2', 't3', 't4'].map((id) => ({ id, weekly_limit: 10, unavailable_days: [] })),
+    rows: [],
+  },
+  timetable: { lessons: o.lessons, day_formats: Object.entries(o.formats).map(([class_id, in_person]) => ({ class_id, day: 1, in_person })) },
+});
+const chain = (passport: number): ValidationInput =>
+  tiny({
+    lessons: [lesson('a', 1, 1, 's-x', 't1'), lesson('b', 1, 2, 's-x', 't1'), lesson('b', 1, 3, 's-x', 't2'), lesson('c', 1, 1, 's-x', 't2'), lesson('d', 1, 1, 's-x', 't4')],
+    formats: { a: false, b: false, c: false, d: true },
+    capacity: { passport },
+  });
 const conforms = (o: ValidationOutcome): void => {
   expect(outcomeSchema(o), JSON.stringify(outcomeSchema.errors)).toBe(true);
 };
@@ -98,13 +133,104 @@ describe('load report', () => {
     expect(tight.load.class_days.find((cd) => cd.class_id === 'c-1' && cd.day === 1)?.reason).toBe('day_limit');
     const roomy = validate(input({ day_formats: remoteDay1 }));
     if (roomy.status === 'INVALID_INPUT') throw new Error('unexpected');
-    expect(roomy.load.class_days.find((cd) => cd.class_id === 'c-2' && cd.day === 1)?.reason).toBe('priority');
+    // c-2 shares t-1 with c-1 on day 1, so both would go in person together: 45 + 3 + 2 = 50 <= 200.
+    // A remote day is never labelled 'priority': the shelter had room, it was just not used.
+    expect(roomy.load.class_days.find((cd) => cd.class_id === 'c-2' && cd.day === 1)?.reason).toBe('capacity_available');
     const alert = validate(input({ snapshot: { kind: 'alert', capacity: { seats: 100, passport: 200 } }, day_formats: remoteDay1 }));
     if (alert.status === 'INVALID_INPUT') throw new Error('unexpected');
     expect(alert.load.class_days.find((cd) => cd.class_id === 'c-1' && cd.day === 1)?.reason).toBe('no_shelter');
-    // c-2 has only math (in the shelter) on day 1: remote by choice, not because of a no-shelter subject.
-    expect(alert.load.class_days.find((cd) => cd.class_id === 'c-2' && cd.day === 1)?.reason).toBe('priority');
+    // c-2 has only math (in the shelter) on day 1, but its teacher t-1 also teaches c-1, which has PE
+    // (not in the shelter): one format per teacher keeps c-2 remote with c-1.
+    expect(alert.load.class_days.find((cd) => cd.class_id === 'c-2' && cd.day === 1)?.reason).toBe('no_shelter');
     expect(alert.load.summary.peak.map((p) => p.condition)).toEqual(['passport', 'seats']);
+  });
+
+  it('never labels a remote day "priority" when the shelter is roomy and nothing is a priority', () => {
+    // Reproduction of bug 2: passport 2000, no priority classes or areas, day 1 remote for everyone.
+    const noPriority = input().snapshot;
+    const o = validate(
+      input({
+        snapshot: {
+          capacity: { passport: 2000 },
+          classes: noPriority.classes.map((c) => ({ ...c, priority: false })),
+          subjects: noPriority.subjects.map((s) => ({ ...s, priority_area: false })),
+        },
+        day_formats: dayFormats().map((f) => (f.day === 1 ? { ...f, in_person: false } : f)),
+      }),
+    );
+    if (o.status === 'INVALID_INPUT') throw new Error('unexpected');
+    const remote = o.load.class_days.filter((cd) => !cd.in_person && cd.lessons > 0);
+    expect(remote.map((cd) => [cd.class_id, cd.day, cd.reason])).toEqual([
+      ['c-1', 1, 'capacity_available'],
+      ['c-2', 1, 'capacity_available'],
+    ]);
+  });
+
+  it('a remote day fits exactly at the limit with its teacher group, one place less is the day limit', () => {
+    // Day 1 remote: c-1 and c-2 share t-1, so the group is both classes: 45 students + 3 staff + t-1 + t-2 = 50.
+    const remoteDay1 = dayFormats().map((f) => (f.day === 1 ? { ...f, in_person: false } : f));
+    const reasonOf = (passport: number): string | undefined => {
+      const o = validate(input({ snapshot: { capacity: { passport } }, day_formats: remoteDay1 }));
+      if (o.status === 'INVALID_INPUT') throw new Error('unexpected');
+      return o.load.class_days.find((cd) => cd.class_id === 'c-2' && cd.day === 1)?.reason;
+    };
+    expect(reasonOf(50)).toBe('capacity_available');
+    // c-2 alone would fit (20 + 3 + t-1 = 24), but not without c-1.
+    expect(reasonOf(49)).toBe('day_limit');
+  });
+
+  it('the teacher group is transitive and is counted on top of the in-person classes', () => {
+    // Day 1: t1 teaches a and b, t2 teaches b and c (a, b, c remote); d is in person with t4. Staff 0.
+    // a's group is {a, b, c}: with d that is 40 students + t1 + t2 + t4 = 43.
+    // Without transitivity {a, b} + d = 33; without the in-person classes {a, b, c} = 32; a alone + d = 22.
+    const reasonOfA = (passport: number): string | undefined => {
+      const o = validate(chain(passport));
+      if (o.status === 'INVALID_INPUT') throw new Error('unexpected');
+      return o.load.class_days.find((cd) => cd.class_id === 'a')?.reason;
+    };
+    expect(reasonOfA(43)).toBe('capacity_available');
+    expect(reasonOfA(42)).toBe('day_limit');
+  });
+
+  it('a lesson of an unknown teacher links no classes (as in teacher_mixed_format)', () => {
+    // a and b are remote; their only lessons are with t-gone, which is not in the snapshot. Staff 0.
+    // a alone in person: 10 + t-gone = 11; linked with b it would be 21.
+    const o = validate(
+      tiny({
+        lessons: [lesson('a', 1, 1, 's-x', 't-gone'), lesson('b', 1, 2, 's-x', 't-gone')],
+        formats: { a: false, b: false },
+        capacity: { passport: 11 },
+      }),
+    );
+    if (o.status === 'INVALID_INPUT') throw new Error('unexpected');
+    expect(o.load.class_days.find((cd) => cd.class_id === 'a')?.reason).toBe('capacity_available');
+  });
+
+  it('model 1.2: a no-shelter lesson in the teacher group keeps the class remote; model 1.1 ignores it', () => {
+    // a has only s-x but shares t1 with b, which has s-ns (not in the shelter); c is on its own.
+    const ls = [lesson('a', 1, 1, 's-x', 't1'), lesson('b', 1, 2, 's-x', 't1'), lesson('b', 1, 3, 's-ns', 't2'), lesson('c', 1, 1, 's-x', 't3')];
+    const formats = { a: false, b: false, c: false };
+    const m12 = validate(tiny({ lessons: ls, formats, kind: 'alert', capacity: { seats: 1000, passport: 1000 } }));
+    const m11 = validate(tiny({ lessons: ls, formats, capacity: { passport: 1000 } }));
+    if (m12.status === 'INVALID_INPUT' || m11.status === 'INVALID_INPUT') throw new Error('unexpected');
+    const reasons = (o: typeof m11): Record<string, string> => Object.fromEntries(o.load.class_days.map((cd) => [cd.class_id, cd.reason]));
+    expect(reasons(m12)).toEqual({ a: 'no_shelter', b: 'no_shelter', c: 'capacity_available' });
+    expect(reasons(m11)).toEqual({ a: 'capacity_available', b: 'capacity_available', c: 'capacity_available' });
+  });
+
+  it('in-person days keep their reasons', () => {
+    const o = validate(input());
+    if (o.status === 'INVALID_INPUT') throw new Error('unexpected');
+    // c-1 is a priority class; c-2 is not, but math is a priority area.
+    expect(o.load.class_days.find((cd) => cd.class_id === 'c-2' && cd.day === 1)?.reason).toBe('priority');
+    const plain = input().snapshot;
+    const none = validate(
+      input({
+        snapshot: { classes: plain.classes.map((c) => ({ ...c, priority: false })), subjects: plain.subjects.map((s) => ({ ...s, priority_area: false })) },
+      }),
+    );
+    if (none.status === 'INVALID_INPUT') throw new Error('unexpected');
+    expect(none.load.class_days.find((cd) => cd.class_id === 'c-1' && cd.day === 1)?.reason).toBe('capacity_available');
   });
 
   it('lists classes that never study in person', () => {

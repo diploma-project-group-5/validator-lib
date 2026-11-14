@@ -52,3 +52,53 @@ export const validSchool = fc
       timetable: { lessons: ls, day_formats: fs },
     };
   });
+
+/**
+ * An arbitrary school for the /load reasons, valid at the boundary but not necessarily by the rules:
+ * teachers shared across classes, any day formats, no-shelter subjects, a capacity from tight to roomy.
+ */
+export const loadSchool = fc
+  .record({
+    classes: fc.array(fc.record({ students: fc.integer({ min: 1, max: 40 }), priority: fc.boolean() }), { minLength: 1, maxLength: 5 }),
+    days: fc.integer({ min: 1, max: 3 }),
+    teachers: fc.integer({ min: 1, max: 4 }),
+    // Per class-day: lessons as (teacher, subject) indices; the subject s-1 is not held in the shelter.
+    plan: fc.array(fc.array(fc.tuple(fc.nat(), fc.boolean()), { maxLength: 3 }), { minLength: 15, maxLength: 15 }),
+    formats: fc.array(fc.boolean(), { minLength: 15, maxLength: 15 }),
+    alert: fc.boolean(),
+    staff: fc.integer({ min: 0, max: 5 }),
+    passport: fc.integer({ min: 0, max: 200 }),
+    seats: fc.integer({ min: 0, max: 150 }),
+  })
+  .map(({ classes, days, teachers, plan, formats, alert, staff, passport, seats }): ValidationInput => {
+    const schoolDays = Array.from({ length: days }, (_, i) => i + 1);
+    const ls: Lesson[] = [];
+    const fs: DayFormat[] = [];
+    classes.forEach((_, c) => {
+      for (const day of schoolDays) {
+        const i = c * 3 + day - 1;
+        (plan[i] ?? []).forEach(([t, ns], n) => {
+          ls.push({ class_id: `c-${String(c)}`, day, lesson_no: n + 1, subject_id: ns ? 's-1' : 's-0', teacher_id: `t-${String(t % teachers)}` });
+        });
+        fs.push({ class_id: `c-${String(c)}`, day, in_person: formats[i] ?? false });
+      }
+    });
+    return {
+      schema_version: '1.0',
+      snapshot: {
+        kind: alert ? 'alert' : 'main',
+        school_days: schoolDays,
+        lessons_per_day: 3,
+        staff,
+        capacity: alert ? { seats, passport } : { passport },
+        classes: classes.map((c, i) => ({ id: `c-${String(i)}`, ...c })),
+        subjects: [
+          { id: 's-0', priority_area: true, no_shelter: false },
+          { id: 's-1', priority_area: false, no_shelter: true },
+        ],
+        teachers: Array.from({ length: teachers }, (_, t) => ({ id: `t-${String(t)}`, weekly_limit: 50, unavailable_days: [] })),
+        rows: [],
+      },
+      timetable: { lessons: ls, day_formats: fs },
+    };
+  });
