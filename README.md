@@ -21,6 +21,8 @@ const outcome = validate(input, { max_conflicts: 200 });
 - **Результат** — `validation.outcome.v1.json`:
   - `ACCEPTED` / `REJECTED` + `conflicts[]` (коди з `conflict.v1.json`), `conflicts_total` і `load` (значення для `/load`);
   - `INVALID_INPUT` + `issues[]`: зламаний вхід або знімок. У `issues` лише JSON-вказівники, ніколи значення.
+    Позицій не більше 20. Позиції поза `timetable` завжди стоять перед позиціями `timetable`: якщо зламано щось поза
+    розкладом, у `issues` є хоча б одна така позиція, хоч би яким великим був зламаний розклад.
 
 | Результат | Задача побудови | `:publish` / `:activate` |
 |---|---|---|
@@ -127,3 +129,6 @@ npm run mutation  # Stryker mutation testing, ~6 min; report in reports/mutation
 
 Схеми копіюються з `@lad/contracts` у `src/generated/` (`npm run sync-schemas`, автоматично перед тестами й збіркою)
 і не редагуються тут. Будь-яка зміна, що може змінити вердикт або код конфлікту, — MINOR-версія.
+Межа компілює копію схеми входу, у якій кожен `$ref` підставлено під час генерації (`scripts/deref.mjs`): Ajv
+склеює помилки кожного виклику `$ref` через `concat`, і з `allErrors` на сміттєвому вході перевірка ставала
+квадратичною. Копія без `$ref` перевіряється лінійно; цикл, `$dynamicRef` чи нерозв'язний `$ref` зупиняють генерацію.

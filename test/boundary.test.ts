@@ -1,7 +1,10 @@
 // Malformed or hostile input never throws and never echoes input values (ADR 2026-11-09 §6).
+import { Ajv2020, type ErrorObject, type ValidateFunction } from 'ajv/dist/2020.js';
 import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
 
+import { inputCheck } from '../src/boundary/parse.js';
+import { defsSchema, inputSchema, inputSchemaFlat } from '../src/generated/schemas.js';
 import { validate, type InputIssue, type ValidationOutcome } from '../src/index.js';
 import { input, snapshot } from './support/school.js';
 
@@ -165,3 +168,119 @@ describe('INVALID_INPUT issues in detail', () => {
     expect(() => validate(input(), { max_conflicts: -1 })).toThrow(new RangeError('max_conflicts must be a non-negative integer'));
   });
 });
+
+// Bug 6: Ajv calls each $ref as a separate function and concatenates its errors onto all errors so far,
+// so with allErrors junk input took quadratic time (12 000 junk lessons: ~2.3 s, synchronously, inside
+// timetable-service). The boundary compiles a copy of the contract schema with every $ref inlined.
+describe('schema validation on large junk input', () => {
+  const seed = 20261114;
+  const junkLessons = (n: number): unknown[] => Array.from({ length: n }, () => ({ x: 1 }));
+
+  it('the input schema is compiled without $ref chains', () => {
+    expect(JSON.stringify(inputSchemaFlat)).not.toContain('"$ref"');
+    expect(inputCheck.toString()).not.toContain('.concat(');
+  });
+
+  it('the inlined schema reports exactly what the contract schema reports', () => {
+    const reference = new Ajv2020({ allErrors: true, strict: true, validateFormats: false });
+    reference.addSchema(defsSchema);
+    const contract: ValidateFunction = reference.compile(inputSchema);
+    const errors = (fn: ValidateFunction, v: unknown): [boolean, string[]] => {
+      const ok = fn(v);
+      return [ok, (fn.errors ?? []).map((e: ErrorObject) => `${e.instancePath} ${e.keyword}`)];
+    };
+    const rich = full();
+    const paths = pathsOf(rich);
+    const junk = fc.oneof(fc.anything(), fc.constantFrom(null, -1, 1e308, 0.5, '', 'x', true, [], {}, [[]], { x: 1 }));
+    fc.assert(
+      fc.property(fc.array(fc.tuple(fc.constantFrom(...paths), junk), { minLength: 1, maxLength: 3 }), (edits) => {
+        const v = edits.reduce<unknown>((acc, [path, value]) => replaced(acc, path, value), rich);
+        expect(errors(inputCheck, v)).toEqual(errors(contract, v));
+      }),
+      { numRuns: 500, seed },
+    );
+  });
+
+  it('broken absences survive a junk timetable: issues outside the timetable come first', () => {
+    const base = input();
+    const o = issues(validate({ ...base, timetable: { ...base.timetable, lessons: junkLessons(30) }, absences: [{ bad: true }] }));
+    expect(o).toHaveLength(20);
+    expect(o[0]).toMatchObject({ part: 'input', code: 'schema', path: '/absences/0' });
+    expect(o.slice(1).every((i) => i.part === 'timetable')).toBe(true);
+  });
+
+  it('an issue outside the timetable is reported, and first, exactly when something outside it is broken', () => {
+    const rich = full();
+    const outside = pathsOf(rich).filter((p) => p[0] !== 'timetable' && p[0] !== 'schema_version');
+    // Values that no field of the contract accepts.
+    const junk = fc.constantFrom(null, -1, 1e308, [[]], { junk: true });
+    fc.assert(
+      fc.property(fc.option(fc.tuple(fc.constantFrom(...outside), junk)), fc.integer({ min: 1, max: 60 }), (edit, n) => {
+        const broken = edit === null ? rich : replaced(rich, edit[0], edit[1]);
+        const v = replaced(broken, ['timetable', 'lessons'], junkLessons(n));
+        const parts = issues(validate(v)).map((i) => i.part !== 'timetable');
+        expect(parts.includes(true)).toBe(edit !== null);
+        expect(parts).toEqual([...parts].sort((a, b) => Number(b) - Number(a)));
+      }),
+      { numRuns: 300, seed },
+    );
+  });
+
+  it('12 000 junk lessons give exactly 20 timetable issues', () => {
+    const base = input();
+    const o = issues(validate({ ...base, timetable: { ...base.timetable, lessons: junkLessons(12000) } }));
+    expect(o).toHaveLength(20);
+    expect(o.every((i) => i.part === 'timetable' && i.code === 'schema')).toBe(true);
+  });
+
+  it('100 000 items in a list are reported as its maxItems limit', () => {
+    const base = input();
+    const lessons = Array.from({ length: 100000 }, () => 1);
+    expect(issues(validate({ ...base, timetable: { ...base.timetable, lessons } }))).toContainEqual({
+      part: 'timetable',
+      code: 'limit',
+      path: '/timetable/lessons',
+      keyword: 'maxItems',
+    });
+  });
+});
+
+/** A valid input that uses every optional part of the contract, as plain JSON. */
+function full(): unknown {
+  const base = input({ snapshot: { kind: 'alert', capacity: { seats: 30, passport: 200 }, school_days: [1, 2, 3, 4, 5, 6] } });
+  const [first, ...rest] = base.timetable.lessons;
+  return JSON.parse(
+    JSON.stringify({
+      ...base,
+      timetable: {
+        ...base.timetable,
+        lessons: [{ ...first, origin: 'substitution' }, ...rest],
+        not_held: [{ class_id: 'c-1', day: 1, lesson_no: 3, subject_id: 's-pe', kind: 'self_study' }],
+      },
+      absences: [{ teacher_id: 't-2', day: 1, lesson_nos: [3] }],
+      holidays: [6],
+    }),
+  ) as unknown;
+}
+
+type Path = readonly (string | number)[];
+
+/** Every path to a field or list item in a JSON value (the root excluded). */
+function pathsOf(v: unknown, at: Path = []): Path[] {
+  if (typeof v !== 'object' || v === null) return [];
+  return Object.entries(v).flatMap(([k, child]) => {
+    const p = [...at, Array.isArray(v) ? Number(k) : k];
+    return [p, ...pathsOf(child, p)];
+  });
+}
+
+/** A copy of `v` with the value at `path` replaced; a path that no longer exists is left alone. */
+function replaced(v: unknown, path: Path, value: unknown): unknown {
+  const [head, ...tail] = path;
+  if (head === undefined) return value;
+  if (Array.isArray(v) && typeof head === 'number' && head < v.length) return (v as unknown[]).map((x, i) => (i === head ? replaced(x, tail, value) : x));
+  if (typeof v === 'object' && v !== null && !Array.isArray(v) && typeof head === 'string' && head in v) {
+    return { ...v, [head]: replaced((v as Record<string, unknown>)[head], tail, value) };
+  }
+  return v;
+}

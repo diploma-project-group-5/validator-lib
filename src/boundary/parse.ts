@@ -4,11 +4,13 @@
 import { Ajv2020, type ErrorObject, type ValidateFunction } from 'ajv/dist/2020.js';
 
 import type { InputIssue, IssuePart, ValidationInput } from '../domain/types.js';
-import { defsSchema, inputSchema } from '../generated/schemas.js';
+import { inputSchemaFlat } from '../generated/schemas.js';
 
 const MAX_ISSUES = 20;
 
 // Compiled once at import: the schemas are fixed for a release (and a static mutant for Stryker).
+// The contract schema with every $ref inlined at build time (scripts/deref.mjs): Ajv joins the errors of
+// each $ref call with concat, which made allErrors quadratic on junk input (bug 6).
 const ajv = new Ajv2020({
   allErrors: true,
   // Stryker disable next-line BooleanLiteral: strict only governs compiling the fixed contract schemas
@@ -16,13 +18,21 @@ const ajv = new Ajv2020({
   // Stryker disable next-line BooleanLiteral: validation.input reaches no "format" keyword (ids are opaque)
   validateFormats: false,
 });
-ajv.addSchema(defsSchema);
-const check: ValidateFunction = ajv.compile(inputSchema);
+/** The compiled contract schema; exported for the tests that compare it with the original schema. */
+export const inputCheck: ValidateFunction = ajv.compile(inputSchemaFlat);
 
 export type Parsed = { readonly ok: true; readonly value: ValidationInput } | { readonly ok: false; readonly issues: InputIssue[] };
 
 const partOf = (path: string): IssuePart =>
   path.startsWith('/snapshot') ? 'snapshot' : path.startsWith('/timetable') ? 'timetable' : 'input';
+
+/**
+ * At most MAX_ISSUES issues, those outside the timetable first (each group keeps its order). A broken
+ * snapshot, absences or holidays is the caller's fault, a broken timetable the solver's: a junk timetable
+ * must not push the caller's issues past the cap, or the blame flips (bug 6).
+ */
+const capped = (issues: readonly InputIssue[]): InputIssue[] =>
+  [...issues.filter((i) => i.part !== 'timetable'), ...issues.filter((i) => i.part === 'timetable')].slice(0, MAX_ISSUES);
 
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 
@@ -138,8 +148,8 @@ export function parseInput(raw: unknown): Parsed {
       return { ok: false, issues: [{ part: 'snapshot', code: 'kind_capacity_mismatch', path: '/snapshot/capacity' }] };
     }
   }
-  if (!check(raw)) return { ok: false, issues: schemaIssues(check.errors ?? []).slice(0, MAX_ISSUES) };
+  if (!inputCheck(raw)) return { ok: false, issues: capped(schemaIssues(inputCheck.errors ?? [])) };
   const value = raw as unknown as ValidationInput; // shape proven by the contracts schema above
   const issues = [...snapshotIssues(value), ...weekIssues(value)];
-  return issues.length > 0 ? { ok: false, issues: issues.slice(0, MAX_ISSUES) } : { ok: true, value };
+  return issues.length > 0 ? { ok: false, issues: capped(issues) } : { ok: true, value };
 }
