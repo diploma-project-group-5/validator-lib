@@ -31,6 +31,7 @@
     "lint": "eslint .",
     "test": "vitest run --coverage",
     "test:watch": "vitest",
+    "mutation": "npm run sync-schemas && stryker run",
     "check": "npm run lint && npm run typecheck && npm test && npm run build"
   },
   "dependencies": {
@@ -39,6 +40,9 @@
   "devDependencies": {
     "@eslint/js": "10.0.1",
     "@lad/contracts": "git+https://github.com/diploma-project-group-5/contracts.git#v0.3.0",
+    "@stryker-mutator/core": "10.1.1",
+    "@stryker-mutator/typescript-checker": "10.1.1",
+    "@stryker-mutator/vitest-runner": "10.1.1",
     "@types/node": "24.19.2",
     "@vitest/coverage-v8": "4.1.12",
     "eslint": "10.14.0",

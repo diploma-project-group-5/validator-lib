@@ -43,6 +43,7 @@ export function validate(raw: unknown, opts: ValidateOptions = {}): ValidationOu
   const parsed = parseInput(raw);
   if (!parsed.ok) return { status: 'INVALID_INPUT', issues: parsed.issues, meta: meta(null) };
   const { outcome } = outcomeOf(parsed.value);
-  if (outcome.status === 'ACCEPTED' || cap === undefined) return outcome;
-  return { ...outcome, conflicts: outcome.conflicts.slice(0, cap) };
+  // Stryker disable next-line ConditionalExpression,EqualityOperator: narrows the type; ACCEPTED has nothing to cut
+  if (outcome.status === 'ACCEPTED') return outcome;
+  return { ...outcome, conflicts: outcome.conflicts.slice(0, cap) }; // no cap: slice(0, undefined) keeps all
 }

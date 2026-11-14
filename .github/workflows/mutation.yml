@@ -1,0 +1,46 @@
+name: mutation
+
+# Stryker mutation testing (engineering standards: before a release). Too slow for every PR:
+# runs on demand, on release tags and weekly; the HTML report is an artifact of the run.
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+  schedule:
+    - cron: "30 2 * * 1"  # Monday 02:30 UTC
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mutation-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  mutation:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7, resolved 2026-11-08
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      # Same as ci.yml: the lockfile records the public @lad/contracts git dependency as ssh.
+      - name: Fetch git dependencies over https
+        run: git config --global url."https://github.com/".insteadOf "ssh://git@github.com/"
+      - name: Install (locked)
+        run: npm ci
+      # Fails below the break threshold in stryker.config.json.
+      - name: Mutation testing
+        run: npm run mutation
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        with:
+          name: mutation-report
+          path: reports/mutation/
+          if-no-files-found: warn
+          retention-days: 14

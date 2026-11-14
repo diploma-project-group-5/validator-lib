@@ -73,3 +73,36 @@ describe('arguments and exit codes', () => {
     });
   });
 });
+
+// Limits and edge cases at their exact boundary: found by mutation testing.
+describe('JSONL edge cases', () => {
+  it('a line that is not JSON gets exactly one input:schema issue', async () => {
+    const { out } = await run(['{not json']);
+    expect(out[0]?.['issues']).toEqual([{ part: 'input', code: 'schema', path: '' }]);
+  });
+
+  it('keeps a case_id of exactly 128 characters and drops 129', async () => {
+    const at = (n: number) => JSON.stringify({ case_id: 'x'.repeat(n), input: input() });
+    const { out } = await run([at(128), at(129)]);
+    expect(out.map((o) => (typeof o['case_id'] === 'string' ? o['case_id'].length : null))).toEqual([128, null]);
+  });
+
+  it('a line of exactly MAX_LINE_BYTES is parsed, not refused by size', async () => {
+    const { out } = await run(['x'.repeat(MAX_LINE_BYTES)]);
+    expect(out[0]?.['issues']).toEqual([{ part: 'input', code: 'schema', path: '' }]);
+  });
+
+  it('skips a whitespace-only line but keeps counting line numbers', async () => {
+    const { out, counts } = await run(['   ', JSON.stringify({ case_id: 'a', input: input() })]);
+    expect(out.map((o) => o['line_no'])).toEqual([2]);
+    expect(counts.lines).toBe(1);
+  });
+
+  it('accepts --max-conflicts 0', () => {
+    expect(parseArgs(['--max-conflicts', '0'])).toEqual({ version: false, failOnReject: false, maxConflicts: 0 });
+  });
+
+  it('--fail-on-reject also fails when the only problem is an invalid line', () => {
+    expect(exitCode({ lines: 1, accepted: 0, rejected: 0, invalid: 1 }, { version: false, failOnReject: true })).toBe(1);
+  });
+});

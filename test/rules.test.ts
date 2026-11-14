@@ -195,3 +195,25 @@ describe('alert timetable (model 1.2)', () => {
     expect(validate(input({ snapshot: alert(0, 3), day_formats: allRemote })).status).toBe('ACCEPTED');
   });
 });
+
+// Branches found by mutation testing: day formats outside the snapshot, a missing format, not_held outside the plan.
+describe('day formats and not_held edge cases', () => {
+  it('a day format of an unknown class or of a non-school day is reported', () => {
+    const o = validate(input({ day_formats: [...dayFormats(), { class_id: 'c-x', day: 1, in_person: false }, { class_id: 'c-1', day: 6, in_person: false }] }));
+    expect(conflicts(o)).toContainEqual({ rule: 'class_not_active', class_id: 'c-x' });
+    expect(conflicts(o)).toContainEqual({ rule: 'day_not_school_day', class_id: 'c-1', day: 6 });
+  });
+
+  it('a class-day without a format is only day_format_missing, never an empty in-person day', () => {
+    // c-2 has no lessons on day 5; without its format the day must not be taken as in person.
+    const o = validate(input({ day_formats: dayFormats().filter((f) => !(f.class_id === 'c-2' && f.day === 5)) }));
+    expect(conflicts(o)).toEqual([{ rule: 'day_format_missing', class_id: 'c-2', day: 5 }]);
+  });
+
+  it('a not-held slot of a subject outside the plan is lesson_not_in_plan', () => {
+    const base = input({ snapshot: { subjects: [...input().snapshot.subjects, { id: 's-art', priority_area: false, no_shelter: false }] } });
+    const slot = { class_id: 'c-1', day: 6, lesson_no: 1, subject_id: 's-art', kind: 'holiday' };
+    const o = validate({ ...base, holidays: [6], timetable: { ...base.timetable, not_held: [slot] } });
+    expect(conflicts(o)).toEqual([{ rule: 'lesson_not_in_plan', class_id: 'c-1', subject_id: 's-art' }]);
+  });
+});

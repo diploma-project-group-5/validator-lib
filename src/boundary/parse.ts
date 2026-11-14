@@ -4,20 +4,20 @@
 import { Ajv2020, type ErrorObject, type ValidateFunction } from 'ajv/dist/2020.js';
 
 import type { InputIssue, IssuePart, ValidationInput } from '../domain/types.js';
-import { conflictSchema, defsSchema, inputSchema } from '../generated/schemas.js';
+import { defsSchema, inputSchema } from '../generated/schemas.js';
 
 const MAX_ISSUES = 20;
 
-let compiled: ValidateFunction | undefined;
-function validator(): ValidateFunction {
-  if (compiled === undefined) {
-    const ajv = new Ajv2020({ allErrors: true, strict: true, validateFormats: false });
-    ajv.addSchema(defsSchema);
-    ajv.addSchema(conflictSchema);
-    compiled = ajv.compile(inputSchema);
-  }
-  return compiled;
-}
+// Compiled once at import: the schemas are fixed for a release (and a static mutant for Stryker).
+const ajv = new Ajv2020({
+  allErrors: true,
+  // Stryker disable next-line BooleanLiteral: strict only governs compiling the fixed contract schemas
+  strict: true,
+  // Stryker disable next-line BooleanLiteral: validation.input reaches no "format" keyword (ids are opaque)
+  validateFormats: false,
+});
+ajv.addSchema(defsSchema);
+const check: ValidateFunction = ajv.compile(inputSchema);
 
 export type Parsed = { readonly ok: true; readonly value: ValidationInput } | { readonly ok: false; readonly issues: InputIssue[] };
 
@@ -138,7 +138,6 @@ export function parseInput(raw: unknown): Parsed {
       return { ok: false, issues: [{ part: 'snapshot', code: 'kind_capacity_mismatch', path: '/snapshot/capacity' }] };
     }
   }
-  const check = validator();
   if (!check(raw)) return { ok: false, issues: schemaIssues(check.errors ?? []).slice(0, MAX_ISSUES) };
   const value = raw as unknown as ValidationInput; // shape proven by the contracts schema above
   const issues = [...snapshotIssues(value), ...weekIssues(value)];

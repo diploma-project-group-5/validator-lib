@@ -1,12 +1,13 @@
 // Ordering, determinism, truncation, the /load report, conformance to the contracts outcome schema,
-// version metadata and the purity of the domain layer.
-import { readdirSync, readFileSync } from 'node:fs';
+// and version metadata (the purity of the domain layer: architecture.test.ts).
+import { readFileSync } from 'node:fs';
 
 import { Ajv2020 } from 'ajv/dist/2020.js';
 import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
 
-import { CONTRACTS_VERSION, RULES, VALIDATOR_VERSION, validate, type ValidationOutcome } from '../src/index.js';
+import { CONTRACTS_VERSION, RULES, VALIDATOR_VERSION, validate, type Conflict, type ValidationOutcome } from '../src/index.js';
+import { sortConflicts } from '../src/domain/order.js';
 import { dayFormats, input, lessons } from './support/school.js';
 
 const SCHEMAS = new URL('../src/generated/schemas/', import.meta.url);
@@ -101,6 +102,8 @@ describe('load report', () => {
     const alert = validate(input({ snapshot: { kind: 'alert', capacity: { seats: 100, passport: 200 } }, day_formats: remoteDay1 }));
     if (alert.status === 'INVALID_INPUT') throw new Error('unexpected');
     expect(alert.load.class_days.find((cd) => cd.class_id === 'c-1' && cd.day === 1)?.reason).toBe('no_shelter');
+    // c-2 has only math (in the shelter) on day 1: remote by choice, not because of a no-shelter subject.
+    expect(alert.load.class_days.find((cd) => cd.class_id === 'c-2' && cd.day === 1)?.reason).toBe('priority');
     expect(alert.load.summary.peak.map((p) => p.condition)).toEqual(['passport', 'seats']);
   });
 
@@ -113,13 +116,18 @@ describe('load report', () => {
   });
 });
 
-describe('architecture', () => {
-  it('the domain imports neither the boundary, the CLI nor Node APIs', () => {
-    const dir = new URL('../src/domain/', import.meta.url);
-    for (const f of readdirSync(dir).filter((n) => n.endsWith('.ts'))) {
-      const src = readFileSync(new URL(f, dir), 'utf8');
-      expect(src, f).not.toMatch(/from ['"](node:|\.\.\/boundary|\.\.\/cli)/);
-      expect(src, f).not.toMatch(/\b(Date|Math\.random|process|console)\b/);
-    }
+// A missing field sorts first, strings compare by code unit (order.ts): found by mutation testing.
+describe('conflict order with missing fields', () => {
+  it('sorts a missing day, class or lesson number before present ones', () => {
+    const c = (over: Partial<Conflict>): Conflict => ({ rule: 'class_double_booked', ...over });
+    const sorted = sortConflicts([c({ day: 2, class_id: 'b', lesson_no: 2 }), c({ day: 2, class_id: 'b' }), c({ day: 2, class_id: 'a' }), c({ day: 2 }), c({})]);
+    expect(sorted).toEqual([c({}), c({ day: 2 }), c({ day: 2, class_id: 'a' }), c({ day: 2, class_id: 'b' }), c({ day: 2, class_id: 'b', lesson_no: 2 })]);
+  });
+
+  it('sorts days and lesson numbers ascending whatever the input order', () => {
+    const c = (day: number, lesson_no: number): Conflict => ({ rule: 'class_double_booked', class_id: 'a', day, lesson_no });
+    const want = [c(1, 1), c(1, 3), c(2, 2), c(3, 1)];
+    expect(sortConflicts([c(3, 1), c(1, 3), c(2, 2), c(1, 1)])).toEqual(want);
+    expect(sortConflicts([...want].reverse())).toEqual(want);
   });
 });

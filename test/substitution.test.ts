@@ -340,3 +340,43 @@ describe('properties of the effective week', () => {
     );
   });
 });
+
+// newConflicts on measured conflicts: found by mutation testing (plan hours either way, one place per conflict).
+describe('newConflicts: measured conflicts', () => {
+  const without = (drop: (l: { class_id: string; day: number; subject_id: string }) => boolean): ValidationInput => {
+    const base = input();
+    return { ...base, timetable: { ...base.timetable, lessons: base.timetable.lessons.filter((l) => !drop(l)) } };
+  };
+  const plus = (extra: ValidationInput['timetable']['lessons']): ValidationInput => {
+    const base = input();
+    return { ...base, timetable: { ...base.timetable, lessons: [...base.timetable.lessons, ...extra] } };
+  };
+  const fewerMath = without((l) => l.class_id === 'c-1' && l.subject_id === 's-math' && l.day >= 4); // c-1 math: 3 of 5
+  const checked = (b: ValidationInput, e: ValidationInput) => {
+    const r = newConflicts(b, e);
+    if (r.status !== 'CHECKED') throw new Error('expected CHECKED');
+    return r;
+  };
+
+  it('plan hours closer to the plan from the other side is an improvement, not a new conflict', () => {
+    // baseline 3 of 5 (2 short); effective 6 of 5 (1 over).
+    const sixMath = plus([{ class_id: 'c-1', day: 1, lesson_no: 4, subject_id: 's-math', teacher_id: 't-1' }]);
+    expect(checked(fewerMath, sixMath).added).toEqual([]);
+  });
+
+  it('a measured conflict at a new place is new even if the old place was worse', () => {
+    // baseline: c-1 math 2 short; effective: c-1 math fine, c-2 math 2 over.
+    const c2 = plus([
+      { class_id: 'c-2', day: 1, lesson_no: 4, subject_id: 's-math', teacher_id: 't-1' },
+      { class_id: 'c-2', day: 1, lesson_no: 5, subject_id: 's-math', teacher_id: 't-1' },
+    ]);
+    expect(checked(fewerMath, c2).added).toEqual([
+      { rule: 'plan_hours_mismatch', class_id: 'c-2', subject_id: 's-math', value: 6, limit: 4 },
+    ]);
+  });
+
+  it('two weeks on different snapshots are a caller bug', () => {
+    const other = { ...input(), snapshot: { ...input().snapshot, staff: 4 } };
+    expect(() => newConflicts(input(), other)).toThrow(new RangeError('baseline and effective must be checked against the same snapshot'));
+  });
+});

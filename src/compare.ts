@@ -37,11 +37,10 @@ export function newConflicts(baselineRaw: unknown, effectiveRaw: unknown): Subst
   // Conflicts with a value (capacity, weekly limit, plan hours) are compared by place: new only if worse, so a
   // substitution that eases a load the stale week already exceeded is not blocked.
   const worstBefore = new Map<string, number>();
-  for (const c of before.outcome.conflicts) {
-    if (c.value !== undefined) worstBefore.set(place(c), severity(c));
-  }
+  // Every baseline conflict is recorded; only measured ones are ever looked up (a rule never shares a place).
+  for (const c of before.outcome.conflicts) worstBefore.set(place(c), severity(c));
   const added = after.outcome.conflicts.filter((c) => {
-    if (c.value !== undefined) {
+    if (measured(c)) {
       const was = worstBefore.get(place(c));
       return was === undefined || severity(c) > was;
     }
@@ -51,9 +50,13 @@ export function newConflicts(baselineRaw: unknown, effectiveRaw: unknown): Subst
   return { status: 'CHECKED', added, baseline: before.outcome, effective: after.outcome };
 }
 
+const measured = (c: Conflict): boolean => c.value !== undefined;
+
 /** The conflict without its measured value: rule, location and limit. */
 const place = (c: Conflict): string => JSON.stringify({ ...c, value: null });
 
-/** How far a measured conflict is from its limit; plan hours can miss in either direction. */
-const severity = (c: Conflict): number =>
-  c.rule === 'plan_hours_mismatch' ? Math.abs((c.value ?? 0) - (c.limit ?? 0)) : (c.value ?? 0);
+/**
+ * How far a measured conflict is from its limit. Plan hours can miss in either direction; capacity
+ * and the weekly limit only exceed it, so for them this is the excess (same place -> same limit).
+ */
+const severity = (c: Conflict): number => Math.abs((c.value ?? 0) - (c.limit ?? 0));
