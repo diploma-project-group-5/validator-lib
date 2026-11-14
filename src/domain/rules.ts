@@ -43,6 +43,7 @@ export function modelCapacity(
 ): { model: '1.1'; capacity: CapacityPassport } | { model: '1.2'; capacity: CapacityAlert } {
   const { capacity } = input.snapshot;
   if (input.snapshot.kind === 'alert') {
+    // Stryker disable next-line all: unreachable, the boundary refuses an alert snapshot without seats
     if (!('seats' in capacity)) throw new TypeError('alert snapshot without seats passed the boundary');
     return { model: '1.2', capacity };
   }
@@ -191,6 +192,7 @@ export function evaluate(input: ValidationInput): { conflicts: Conflict[]; count
   }
   for (const [k, seen] of teacherFormats) {
     if (seen.size > 1) {
+      // Stryker disable next-line StringLiteral: the key always has both parts; defaults only satisfy the type
       const [teacher_id = '', day = ''] = k.split('\u0000');
       add({ rule: 'teacher_mixed_format', teacher_id, day: Number(day) }, teacherDayLessons.get(k) ?? 1);
     }

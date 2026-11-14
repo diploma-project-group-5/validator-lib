@@ -117,8 +117,13 @@ CI перевіряє це кроком «Package is importable after install».
 
 ```bash
 npm install
-npm run check   # lint, typecheck, tests with coverage, build
+npm run check     # lint, typecheck, tests with coverage, build
+npm run mutation  # Stryker mutation testing, ~6 min; report in reports/mutation/index.html
 ```
+
+Мутаційне тестування (Stryker) обов'язкове перед релізом: CI запускає його на тегах `v*`, раз на тиждень і вручну
+(workflow `mutation`). Поріг — 80 % убитих мутантів, на 0.2.0 — 100 %. Еквівалентні мутанти позначено в коді
+коментарем `// Stryker disable … : причина`.
 
 Схеми копіюються з `@lad/contracts` у `src/generated/` (`npm run sync-schemas`, автоматично перед тестами й збіркою)
 і не редагуються тут. Будь-яка зміна, що може змінити вердикт або код конфлікту, — MINOR-версія.

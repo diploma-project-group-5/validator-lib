@@ -8,6 +8,7 @@ const rank = new Map(RULES.map((r, i) => [r, i]));
 const cmpNum = (a: number | undefined, b: number | undefined): number =>
   a === b ? 0 : a === undefined ? -1 : b === undefined ? 1 : a - b;
 const cmpStr = (a: string | undefined, b: string | undefined): number =>
+  // Stryker disable next-line EqualityOperator: a === b is answered first, so a <= b equals a < b here
   a === b ? 0 : a === undefined ? -1 : b === undefined ? 1 : a < b ? -1 : 1;
 
 export function compareConflicts(a: Conflict, b: Conflict): number {

@@ -15,7 +15,7 @@ const pureCore = {
 };
 
 export default tseslint.config(
-  { ignores: ['dist/', 'coverage/', 'node_modules/', 'src/generated/'] },
+  { ignores: ['dist/', 'coverage/', 'node_modules/', 'src/generated/', 'reports/', '.stryker-tmp/'] },
   js.configs.recommended,
   ...tseslint.configs.strictTypeChecked,
   {

@@ -100,3 +100,68 @@ describe('totality', () => {
     expect(o.status).toBe('ACCEPTED');
   });
 });
+
+// Exact issues, not only codes: found by mutation testing (paths, parts, the issue cap).
+describe('INVALID_INPUT issues in detail', () => {
+  it('names the exact issue for a non-object, a wrong version and a kind/capacity mismatch', () => {
+    expect(issues(validate(null))).toEqual([{ part: 'input', code: 'schema', path: '', keyword: 'type' }]);
+    expect(issues(validate({ ...input(), schema_version: '2.0' }))).toEqual([
+      { part: 'input', code: 'unsupported_version', path: '/schema_version' },
+    ]);
+    expect(issues(validate(input({ snapshot: { capacity: { seats: 10, passport: 20 } } })))).toEqual([
+      { part: 'snapshot', code: 'kind_capacity_mismatch', path: '/snapshot/capacity' },
+    ]);
+  });
+
+  it('a top-level schema error is part=input, and every distinct error is reported', () => {
+    expect(issues(validate({ ...input(), extra: 1 }))).toEqual([
+      { part: 'input', code: 'schema', path: '', keyword: 'additionalProperties' },
+    ]);
+    const base = input();
+    const two = { ...base, snapshot: { ...base.snapshot, staff: -1 }, timetable: { ...base.timetable, day_formats: 'x' } };
+    expect(issues(validate(two)).map((i) => i.path)).toEqual(['/snapshot/staff', '/timetable/day_formats']);
+  });
+
+  it('too many items is a limit, with the path of the list', () => {
+    const many = Array.from({ length: 201 }, (_, i) => ({ id: `c-${String(i)}`, students: 1, priority: false }));
+    expect(issues(validate(input({ snapshot: { classes: many, rows: [] }, lessons: [], day_formats: [] })))).toEqual([
+      { part: 'snapshot', code: 'limit', path: '/snapshot/classes', keyword: 'maxItems' },
+    ]);
+  });
+
+  it('a number above its maximum is a limit too', () => {
+    expect(issues(validate(input({ snapshot: { staff: 100001 } })))).toEqual([
+      { part: 'snapshot', code: 'limit', path: '/snapshot/staff', keyword: 'maximum' },
+    ]);
+  });
+
+  it('a row with an unknown class and teacher names both fields', () => {
+    const s = snapshot();
+    const row = { class_id: 'c-x', subject_id: 's-math', teacher_id: 't-x', hours: 1 };
+    expect(issues(validate(input({ snapshot: { rows: [...s.rows, row] } })))).toEqual([
+      { part: 'snapshot', code: 'unknown_reference', path: '/snapshot/rows/4/class_id' },
+      { part: 'snapshot', code: 'unknown_reference', path: '/snapshot/rows/4/teacher_id' },
+    ]);
+  });
+
+  it('week marks: exact paths of an unknown absent teacher, a school-day holiday and a holiday slot', () => {
+    const base = input();
+    expect(issues(validate({ ...base, absences: [{ teacher_id: 't-x', day: 1, lesson_nos: [1] }] }))).toEqual([
+      { part: 'input', code: 'unknown_reference', path: '/absences/0/teacher_id' },
+    ]);
+    expect(issues(validate({ ...base, holidays: [1] }))).toEqual([{ part: 'input', code: 'not_held_day', path: '/holidays/0' }]);
+    const slot = { class_id: 'c-1', day: 6, lesson_no: 1, subject_id: 's-math', kind: 'holiday' };
+    expect(issues(validate({ ...base, timetable: { ...base.timetable, not_held: [slot] } }))).toEqual([
+      { part: 'timetable', code: 'requires_holidays', path: '/timetable/not_held/0/day' },
+    ]);
+  });
+
+  it('reports at most 20 semantic issues', () => {
+    const copies = Array.from({ length: 25 }, () => ({ id: 'c-1', students: 1, priority: false }));
+    expect(issues(validate(input({ snapshot: { classes: copies } })))).toHaveLength(20);
+  });
+
+  it('a bad max_conflicts is a caller bug with a clear message', () => {
+    expect(() => validate(input(), { max_conflicts: -1 })).toThrow(new RangeError('max_conflicts must be a non-negative integer'));
+  });
+});

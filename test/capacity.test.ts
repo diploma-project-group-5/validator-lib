@@ -78,3 +78,10 @@ describe('model and capacity must agree', () => {
     expect(() => dayLoad(bad as unknown as DayLoadInput)).toThrow(TypeError);
   });
 });
+
+describe('dayLoad from a JavaScript caller', () => {
+  it('model 1.2 without seats throws instead of skipping the seats condition', () => {
+    const bad = { model: '1.2', capacity: { passport: 10 }, staff: 0, day: { classes: [], lessons: [] } } as unknown as DayLoadInput;
+    expect(() => dayLoad(bad)).toThrow(new TypeError('model 1.2 needs capacity.seats'));
+  });
+});
