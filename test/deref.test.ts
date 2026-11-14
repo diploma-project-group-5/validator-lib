@@ -3,7 +3,7 @@
 // input with allErrors; the inlined copy has no calls. Anything it cannot inline exactly fails the build.
 import { describe, expect, it } from 'vitest';
 
-import { deref } from '../scripts/deref.mjs';
+import { deref, hasRef } from '../scripts/deref.mjs';
 
 const BASE = 'https://lad.example/s/';
 const defs = {
@@ -131,8 +131,48 @@ describe('deref', () => {
     expect(() => deref({ items: {} }, [])).toThrow(new Error('the root schema needs an absolute $id'));
   });
 
+  it('an allOf next to $ref keeps both: the target first, then its own subschemas', () => {
+    const root = at({ $defs: { t: { type: 'string' } }, items: { $ref: '#/$defs/t', allOf: [{ minLength: 1 }, { maxLength: 9 }] } });
+    expect(deref(root, [])).toEqual({
+      $id: `${BASE}r.json`,
+      items: { allOf: [{ type: 'string' }, { minLength: 1 }, { maxLength: 9 }] },
+    });
+  });
+
+  it('anyOf and oneOf next to $ref stay siblings of the inlined target', () => {
+    const root = at({ $defs: { t: { type: 'string' } }, items: { $ref: '#/$defs/t', anyOf: [{ minLength: 1 }], oneOf: [{ maxLength: 3 }] } });
+    expect(deref(root, [])).toEqual({
+      $id: `${BASE}r.json`,
+      items: { allOf: [{ type: 'string' }], anyOf: [{ minLength: 1 }], oneOf: [{ maxLength: 3 }] },
+    });
+  });
+
   it('a target reached twice on different branches is inlined twice, not taken for a cycle', () => {
     const root = at({ $defs: { n: { type: 'integer' } }, prefixItems: [{ $ref: '#/$defs/n' }, { $ref: '#/$defs/n' }] });
     expect(deref(root, [])).toMatchObject({ prefixItems: [{ allOf: [{ type: 'integer' }] }, { allOf: [{ type: 'integer' }] }] });
+  });
+});
+
+describe('hasRef', () => {
+  it('finds a $ref or $dynamicRef in any schema position', () => {
+    expect(hasRef({ $ref: '#' })).toBe(true);
+    expect(hasRef({ items: { $dynamicRef: '#m' } })).toBe(true);
+    expect(hasRef({ items: { $recursiveRef: '#' } })).toBe(true);
+    expect(hasRef({ allOf: [true, { not: { $ref: '#' } }] })).toBe(true);
+    expect(hasRef({ properties: { a: { type: 'string' }, b: { prefixItems: [{ $ref: '#' }] } } })).toBe(true);
+    expect(hasRef({ patternProperties: { '^x': { if: { $ref: '#' } } } })).toBe(true);
+  });
+
+  it('ignores data and names: const, enum, and properties called $ref', () => {
+    expect(hasRef(true)).toBe(false);
+    expect(hasRef({ type: 'object', properties: { $ref: { type: 'string' } } })).toBe(false);
+    expect(hasRef({ const: { $ref: '#' }, enum: [{ $ref: '#' }], default: { $ref: '#' }, examples: [{ $ref: '#' }] })).toBe(false);
+    expect(hasRef({ allOf: [{ items: { const: { $ref: '#' } } }], description: '$ref' })).toBe(false);
+  });
+
+  it('the output of deref has none', () => {
+    const root = at({ $defs: { t: { type: 'string' } }, properties: { $ref: { $ref: '#/$defs/t' } }, enum: [{ $ref: 'x' }] });
+    expect(hasRef(root)).toBe(true);
+    expect(hasRef(deref(root, []))).toBe(false);
   });
 });

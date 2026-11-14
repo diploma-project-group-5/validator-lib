@@ -1,8 +1,9 @@
 // Malformed or hostile input never throws and never echoes input values (ADR 2026-11-09 §6).
 import { Ajv2020, type ErrorObject, type ValidateFunction } from 'ajv/dist/2020.js';
 import fc from 'fast-check';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
+import { hasRef } from '../scripts/deref.mjs';
 import { inputCheck } from '../src/boundary/parse.js';
 import { defsSchema, inputSchema, inputSchemaFlat } from '../src/generated/schemas.js';
 import { validate, type InputIssue, type ValidationOutcome } from '../src/index.js';
@@ -177,14 +178,31 @@ describe('schema validation on large junk input', () => {
   const junkLessons = (n: number): unknown[] => Array.from({ length: n }, () => ({ x: 1 }));
 
   it('the input schema is compiled without $ref chains', () => {
-    expect(JSON.stringify(inputSchemaFlat)).not.toContain('"$ref"');
+    expect(hasRef(inputSchema)).toBe(true);
+    expect(hasRef(inputSchemaFlat)).toBe(false);
     expect(inputCheck.toString()).not.toContain('.concat(');
   });
 
+  it('validation work grows linearly: errors are pushed, never re-copied with concat', () => {
+    const base = input();
+    const run = (fn: ValidateFunction, n: number): { concats: number; errors: number } => {
+      const spy = vi.spyOn(Array.prototype, 'concat');
+      try {
+        fn({ ...base, timetable: { ...base.timetable, lessons: junkLessons(n) } });
+        return { concats: spy.mock.calls.length, errors: fn.errors?.length ?? 0 };
+      } finally {
+        spy.mockRestore();
+      }
+    };
+    // The probe sees the defect: the contract schema with $ref copies errors once per $ref call.
+    expect(run(contractCheck(), 200).concats).toBeGreaterThan(run(contractCheck(), 100).concats);
+    const [n, twice] = [run(inputCheck, 500), run(inputCheck, 1000)];
+    expect([n.concats, twice.concats]).toEqual([0, 0]);
+    expect(twice.errors).toBe(2 * n.errors);
+  });
+
   it('the inlined schema reports exactly what the contract schema reports', () => {
-    const reference = new Ajv2020({ allErrors: true, strict: true, validateFormats: false });
-    reference.addSchema(defsSchema);
-    const contract: ValidateFunction = reference.compile(inputSchema);
+    const contract = contractCheck();
     const errors = (fn: ValidateFunction, v: unknown): [boolean, string[]] => {
       const ok = fn(v);
       return [ok, (fn.errors ?? []).map((e: ErrorObject) => `${e.instancePath} ${e.keyword}`)];
@@ -226,6 +244,30 @@ describe('schema validation on large junk input', () => {
     );
   });
 
+  it('semantic issues: those outside the timetable first, each group in its own order', () => {
+    const s = snapshot();
+    const slot = { class_id: 'c-1', day: 6, lesson_no: 1, subject_id: 's-math', kind: 'holiday' as const };
+    const base = input({ snapshot: { classes: [...s.classes, { id: 'c-1', students: 1, priority: false }] } });
+    const o = issues(
+      validate({
+        ...base,
+        timetable: { ...base.timetable, not_held: Array.from({ length: 25 }, () => slot) },
+        absences: [{ teacher_id: 't-x', day: 1, lesson_nos: [1] }],
+        holidays: [1],
+      }),
+    );
+    const week = Array.from({ length: 25 }, (_, i) => [
+      { part: 'timetable', code: 'requires_holidays', path: `/timetable/not_held/${String(i)}/day` },
+      ...(i > 0 ? [{ part: 'timetable', code: 'duplicate_slot', path: `/timetable/not_held/${String(i)}` }] : []),
+    ]).flat();
+    expect(o).toEqual([
+      { part: 'snapshot', code: 'duplicate_id', path: '/snapshot/classes/2/id' },
+      { part: 'input', code: 'unknown_reference', path: '/absences/0/teacher_id' },
+      { part: 'input', code: 'not_held_day', path: '/holidays/0' },
+      ...week.slice(0, 17),
+    ]);
+  });
+
   it('12 000 junk lessons give exactly 20 timetable issues', () => {
     const base = input();
     const o = issues(validate({ ...base, timetable: { ...base.timetable, lessons: junkLessons(12000) } }));
@@ -244,6 +286,13 @@ describe('schema validation on large junk input', () => {
     });
   });
 });
+
+/** The contract schema as published, its $ref chains included: the reference for the inlined copy. */
+function contractCheck(): ValidateFunction {
+  const reference = new Ajv2020({ allErrors: true, strict: true, validateFormats: false });
+  reference.addSchema(defsSchema);
+  return reference.compile(inputSchema);
+}
 
 /** A valid input that uses every optional part of the contract, as plain JSON. */
 function full(): unknown {

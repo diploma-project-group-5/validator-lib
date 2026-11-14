@@ -78,8 +78,27 @@ export function deref(root, others) {
     if (!('$ref' in node)) return out;
     const { key, target, base: targetBase } = resolve(node.$ref, here);
     if (stack.includes(key)) throw new Error(`$ref cycle at ${key}`);
-    return { allOf: [walk(target, targetBase, [...stack, key], true)], ...out };
+    // An allOf next to the $ref must survive: the target joins it first (Ajv checks $ref before allOf).
+    const { allOf = [], ...rest } = out;
+    return { allOf: [walk(target, targetBase, [...stack, key], true), ...allOf], ...rest };
   };
 
   return walk(root, new URL(root.$id).href, [], false);
+}
+
+/**
+ * Whether a schema still holds a $ref, $dynamicRef or $recursiveRef anywhere a schema can stand. Data
+ * (`const`, `enum`, `default`, ...) and property names are not schemas, so a `$ref` there does not count.
+ * @param {unknown} schema
+ * @returns {boolean}
+ */
+export function hasRef(schema) {
+  if (!isObject(schema)) return false;
+  if (['$ref', '$dynamicRef', '$recursiveRef'].some((k) => k in schema)) return true;
+  return Object.entries(schema).some(([k, v]) => {
+    if (SCHEMA.has(k)) return hasRef(v);
+    if (SCHEMA_LIST.has(k)) return v.some(hasRef);
+    if (SCHEMA_MAP.has(k) || k === '$defs' || k === 'definitions') return Object.values(v).some(hasRef);
+    return false;
+  });
 }
