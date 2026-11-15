@@ -23,6 +23,18 @@ export type SubstitutionCheck =
       readonly effective: CheckedOutcome;
     };
 
+/**
+ * Thrown by newConflicts for two weeks on different snapshots (or models): a caller bug, not bad data. A
+ * RangeError with the same name and message as before 0.4.0; the CLI batch mode tells it apart from a bug of its
+ * own by this class.
+ */
+export class SnapshotMismatchError extends RangeError {
+  constructor() {
+    // The name stays RangeError: callers that matched the error before 0.4.0 see the same one.
+    super('baseline and effective must be checked against the same snapshot');
+  }
+}
+
 export function newConflicts(baselineRaw: unknown, effectiveRaw: unknown): SubstitutionCheck {
   const b = parseInput(baselineRaw);
   if (!b.ok) return { status: 'INVALID_INPUT', week: 'baseline', issues: b.issues, meta: meta(null) };
@@ -30,7 +42,7 @@ export function newConflicts(baselineRaw: unknown, effectiveRaw: unknown): Subst
   if (!e.ok) return { status: 'INVALID_INPUT', week: 'effective', issues: e.issues, meta: meta(null) };
   if (JSON.stringify(b.value.snapshot) !== JSON.stringify(e.value.snapshot)) {
     // A caller bug: two weeks on different snapshots (or models) are not comparable.
-    throw new RangeError('baseline and effective must be checked against the same snapshot');
+    throw new SnapshotMismatchError();
   }
   const before = outcomeOf(b.value);
   const after = outcomeOf(e.value);

@@ -38,6 +38,8 @@ jobs:
         run: |
           node dist/cli/main.js --version
           echo '{"case_id":"x","input":{}}' | node dist/cli/main.js | grep -q '"INVALID_INPUT"'
+          echo '{"case_id":"x","baseline":{},"effective":{}}' | node dist/cli/main.js --mode new-conflicts | grep -q '"week":"baseline"'
+          if node dist/cli/main.js --mode new-conflicts --max-conflicts 1 </dev/null; then exit 1; fi
       # Services install the library as a git dependency: npm runs `prepare` and packs `files`.
       # npm pack goes through the same steps, so an importable tarball means a working git install.
       - name: Package is importable after install
