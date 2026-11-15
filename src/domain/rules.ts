@@ -50,7 +50,7 @@ export function modelCapacity(
   return { model: '1.1', capacity: { passport: capacity.passport } };
 }
 
-const key = (...parts: (string | number)[]): string => parts.join('\u0000');
+export const key = (...parts: (string | number)[]): string => parts.join('\u0000');
 
 /** Formats of class-days: true if any record says in person (conservative for capacity). */
 export function formatsOf(input: ValidationInput): Map<string, boolean> {

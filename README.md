@@ -143,6 +143,7 @@ CI перевіряє це кроком «Package is importable after install».
 npm install
 npm run check     # lint, typecheck, tests with coverage, build
 npm run mutation  # Stryker mutation testing, ~6 min; report in reports/mutation/index.html
+npm run build && node scripts/bench-load.mjs  # timings of buildLoad/validate, manual, not in CI
 ```
 
 Мутаційне тестування (Stryker) обов'язкове перед релізом: CI запускає його на тегах `v*`, раз на тиждень і вручну

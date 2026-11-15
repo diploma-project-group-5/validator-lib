@@ -105,3 +105,55 @@ export const loadSchool = fc
       timetable: { lessons: ls, day_formats: fs },
     };
   });
+
+/**
+ * A dense, untidy school for comparing buildLoad with the v0.3.0 oracle (not necessarily valid at the
+ * boundary): up to 12 classes on up to 6 school days in any order, 1-3 teachers (large teacher groups),
+ * lessons of a teacher missing from the snapshot (t-gone), of an unknown class (c-u) and of an unknown subject,
+ * lessons on a day that is not a school day, duplicate and missing day formats, models 1.1 and 1.2.
+ */
+export const denseSchool = fc
+  .record({
+    classes: fc.array(fc.record({ students: fc.integer({ min: 0, max: 40 }), priority: fc.boolean() }), { minLength: 1, maxLength: 12 }),
+    days: fc.uniqueArray(fc.integer({ min: 1, max: 6 }), { minLength: 1, maxLength: 6 }),
+    teachers: fc.integer({ min: 1, max: 3 }),
+    lessons: fc.array(fc.record({ c: fc.nat(12), day: fc.integer({ min: 1, max: 7 }), t: fc.nat(9), s: fc.nat(9) }), { maxLength: 90 }),
+    formats: fc.array(fc.record({ c: fc.nat(11), day: fc.integer({ min: 1, max: 7 }), in_person: fc.boolean() }), { maxLength: 70 }),
+    alert: fc.boolean(),
+    staff: fc.integer({ min: 0, max: 5 }),
+    passport: fc.integer({ min: 0, max: 400 }),
+    seats: fc.integer({ min: 0, max: 300 }),
+  })
+  .map(({ classes, days, teachers, lessons, formats, alert, staff, passport, seats }): ValidationInput => {
+    // Index 12 is a class missing from the snapshot.
+    const classId = (c: number) => (c < classes.length ? `c-${String(c)}` : 'c-u');
+    const subjectId = (s: number) => (s < 6 ? 's-0' : s < 8 ? 's-1' : s === 8 ? 's-2' : 's-x');
+    return {
+      schema_version: '1.0',
+      snapshot: {
+        kind: alert ? 'alert' : 'main',
+        school_days: days,
+        lessons_per_day: 10,
+        staff,
+        capacity: alert ? { seats, passport } : { passport },
+        classes: classes.map((c, i) => ({ id: `c-${String(i)}`, ...c })),
+        subjects: [
+          { id: 's-0', priority_area: false, no_shelter: false },
+          { id: 's-1', priority_area: false, no_shelter: true },
+          { id: 's-2', priority_area: true, no_shelter: false },
+        ],
+        teachers: Array.from({ length: teachers }, (_, t) => ({ id: `t-${String(t)}`, weekly_limit: 50, unavailable_days: [] })),
+        rows: [],
+      },
+      timetable: {
+        lessons: lessons.map(({ c, day, t, s }, n) => ({
+          class_id: classId(c),
+          day,
+          lesson_no: 1 + (n % 10),
+          subject_id: subjectId(s),
+          teacher_id: t === 9 ? 't-gone' : `t-${String(t % teachers)}`,
+        })),
+        day_formats: formats.map(({ c, day, in_person }) => ({ class_id: classId(c), day, in_person })),
+      },
+    };
+  });
