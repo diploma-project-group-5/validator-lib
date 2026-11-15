@@ -1,10 +1,12 @@
 #!/usr/bin/env node
-// lad-validate [--fail-on-reject] [--max-conflicts N] < in.jsonl > out.jsonl
+// lad-validate [--mode validate] [--fail-on-reject] [--max-conflicts N] < in.jsonl > out.jsonl
+// lad-validate --mode new-conflicts [--fail-on-reject] < in.jsonl > out.jsonl
 // lad-validate --version
-// Exit codes: 0 processed; 1 --fail-on-reject and a case was not ACCEPTED; 2 usage error; 3 I/O or internal error.
+// Exit codes: 0 processed; 1 --fail-on-reject and a case was not ACCEPTED (new-conflicts: added a conflict or was
+// invalid); 2 usage error; 3 I/O or internal error.
 import { createInterface } from 'node:readline';
 
-import { exitCode, parseArgs, runLines, versionLine } from './run.js';
+import { exitCode, parseArgs, runLines, runNewConflictLines, summaryLine, versionLine } from './run.js';
 
 async function main(): Promise<number> {
   const args = parseArgs(process.argv.slice(2));
@@ -17,12 +19,12 @@ async function main(): Promise<number> {
     return 0;
   }
   const lines = createInterface({ input: process.stdin, crlfDelay: Infinity });
+  const write = (line: string): void => {
+    process.stdout.write(`${line}\n`);
+  };
   const opts = args.maxConflicts === undefined ? {} : { max_conflicts: args.maxConflicts };
-  const counts = await runLines(lines, (line) => process.stdout.write(`${line}\n`), opts);
-  process.stderr.write(
-    `lad-validate: ${String(counts.lines)} cases, ${String(counts.accepted)} accepted, ` +
-      `${String(counts.rejected)} rejected, ${String(counts.invalid)} invalid\n`,
-  );
+  const counts = args.mode === 'new-conflicts' ? await runNewConflictLines(lines, write) : await runLines(lines, write, opts);
+  process.stderr.write(`${summaryLine(counts, args.mode)}\n`);
   return exitCode(counts, args);
 }
 

@@ -94,6 +94,9 @@ else if (r.added.length > 0) { /* 409 conflicts[] = r.added */ }
 else { /* погодити; r.baseline.conflicts — попередження */ }
 ```
 
+Тижні на різних знімках — помилка виклику, а не даних: `newConflicts` кидає `RangeError` (з `0.4.0` — його підклас
+`SnapshotMismatchError` з тим самим іменем і повідомленням, щоб CLI відрізняв цей випадок від власного бага).
+
 Новий — конфлікт, якого не було, або той самий, але гірший: для місткості, тижневого ліміту й годин плану — більше
 значення (далі від норми), для решти — більше порушень за тим самим конфліктом. Полегшення не блокується.
 
@@ -108,13 +111,53 @@ else { /* погодити; r.baseline.conflicts — попередження */
 ## CLI
 
 ```bash
-lad-validate [--fail-on-reject] [--max-conflicts N] < in.jsonl > out.jsonl
+lad-validate [--mode validate] [--fail-on-reject] [--max-conflicts N] < in.jsonl > out.jsonl
+lad-validate --mode new-conflicts [--fail-on-reject] < in.jsonl > out.jsonl
 lad-validate --version
 ```
 
 - Рядок входу: `{"case_id": "...", "input": ValidationInput}`; рядок виходу: `{"case_id", "line_no", ...outcome}`.
 - Зламаний рядок дає `INVALID_INPUT`, обробка триває. Рядок понад 8 МіБ відхиляється без розбору.
+- Порожні рядки пропускаються, але `line_no` рахує й їх; `case_id` — лише рядок до 128 символів, інакше `null`.
+- `issues` несуть JSON pointer і код, ніколи значення входу; stderr — лише лічильники.
 - Коди виходу: 0 — усе оброблено; 1 — `--fail-on-reject` і є не `ACCEPTED`; 2 — помилка аргументів; 3 — внутрішня помилка.
+
+### `--mode new-conflicts` (з `0.4.0`)
+
+Пакетна перевірка заміни для золотих тестів `solver`: кожну пропозицію перевіряє та сама `newConflicts`
+(«Перевірка заміни»), а не друга реалізація правил. Режим за замовчуванням (`validate`) не змінився.
+
+- Рядок входу: `{"case_id": "...", "baseline": ValidationInput, "effective": ValidationInput}` — ті самі два тижні,
+  що приймає `newConflicts`; кожен перевіряється схемою `validation.input` і інваріантами меж, як у `validate`.
+- Рядок виходу: `{"case_id", "line_no", ...SubstitutionCheck}` — рівно те, що повертає `newConflicts`:
+  `CHECKED` з `added[]`, `baseline` і `effective` (повні вердикти тижнів) або `INVALID_INPUT` з `week` та `issues`.
+- Рядок, що не є JSON або довший за 8 МіБ, — `INVALID_INPUT` **без** `week` (винен рядок, а не тиждень).
+  Ліміт 8 МіБ — на весь рядок, тобто на обидва тижні разом.
+  Відсутній `baseline` чи `effective` — зламаний тиждень (`week` відповідний, `input:schema`); JSON, що не є
+  об'єктом (`null`, `7`, `[1]`), — так само, починаючи з `baseline`.
+- Тижні на різних знімках — помилка виклику: бібліотека кидає `SnapshotMismatchError` (`RangeError`), а CLI
+  віддає для цього випадку `INVALID_INPUT` **без** `week` (окремо кожен тиждень правильний, зламана пара) з
+  `issues: [{"part": "snapshot", "code": "schema", "path": "/snapshot"}]` і йде далі. Окремого коду в контракті
+  немає. Знімки порівнюються побайтово після `JSON.stringify`, тож обидва тижні мають нести той самий знімок
+  з тим самим порядком ключів (у Python — той самий `dict`).
+- `--fail-on-reject` → код 1, якщо хоч одна пропозиція щось додала (`added` не порожній) або вхід зламаний.
+  `--max-conflicts` у цьому режимі — помилка аргументів (код 2).
+- stderr: `lad-validate: N cases, X without new conflicts, Y with new conflicts, Z invalid`.
+
+Приклад на парах `contracts/vectors/substitution-approve` (`a3` погіршує місткість, `a4` полегшує; виходи
+`CHECKED` скорочено — повні містять ще `baseline` і `effective`):
+
+```bash
+$ lad-validate --mode new-conflicts --fail-on-reject < cases.jsonl
+{"case_id":"a3","line_no":1,"status":"CHECKED","added":[{"rule":"capacity_exceeded","day":1,"condition":"passport","value":45,"limit":43}],"baseline":{…},"effective":{…}}
+{"case_id":"a4","line_no":2,"status":"CHECKED","added":[],"baseline":{…},"effective":{…}}
+{"case_id":"no-effective","line_no":3,"status":"INVALID_INPUT","week":"effective","issues":[{"part":"input","code":"schema","path":"","keyword":"type"}],"meta":{"validator_version":"0.4.0","contracts_version":"0.3.0","model":null}}
+{"case_id":null,"line_no":4,"status":"INVALID_INPUT","issues":[{"part":"input","code":"schema","path":""}],"meta":{"validator_version":"0.4.0","contracts_version":"0.3.0","model":null}}
+{"case_id":"mismatch","line_no":5,"status":"INVALID_INPUT","issues":[{"part":"snapshot","code":"schema","path":"/snapshot"}],"meta":{"validator_version":"0.4.0","contracts_version":"0.3.0","model":null}}
+lad-validate: 5 cases, 1 without new conflicts, 1 with new conflicts, 3 invalid
+$ echo $?
+1
+```
 
 ## Підключення в сервісі
 
