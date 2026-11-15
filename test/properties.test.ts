@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 
 import { validate, type Conflict, type ValidationInput } from '../src/index.js';
 import { loadSchool, validSchool } from './support/generators.js';
+import { linkedClasses } from './support/groups.js';
 import { dayFormats, input, lesson, lessons } from './support/school.js';
 
 describe('properties', () => {
@@ -57,18 +58,12 @@ describe('/load reasons of remote days', () => {
    */
   const groupOf = (school: ValidationInput, class_id: string, day: number): Set<string> => {
     const known = new Set(school.snapshot.teachers.map((t) => t.id));
-    const parent = new Map<string, string>();
-    const find = (x: string): string => {
-      const p = parent.get(x) ?? x;
-      return p === x ? x : find(p);
-    };
-    const byTeacher = new Map<string, string>();
-    for (const l of school.timetable.lessons.filter((x) => x.day === day && known.has(x.teacher_id))) {
-      const other = byTeacher.get(l.teacher_id);
-      if (other === undefined) byTeacher.set(l.teacher_id, l.class_id);
-      else parent.set(find(l.class_id), find(other));
-    }
-    return new Set(school.snapshot.classes.map((c) => c.id).filter((id) => find(id) === find(class_id)));
+    const linking = school.timetable.lessons.filter((x) => x.day === day && known.has(x.teacher_id));
+    return linkedClasses(
+      linking,
+      school.snapshot.classes.map((c) => c.id),
+      class_id,
+    );
   };
 
   it('a remote day is explained by what would happen if its teacher group came in person (metamorphic)', () => {

@@ -122,7 +122,7 @@ lad-validate --version
 так само як сама бібліотека підключає `@lad/contracts`:
 
 ```json
-"@lad/validator-lib": "git+https://github.com/diploma-project-group-5/validator-lib.git#v0.3.0"
+"@lad/validator-lib": "git+https://github.com/diploma-project-group-5/validator-lib.git#v0.3.1"
 ```
 
 `dist/` не зберігається в git. Під час встановлення з git npm сам виконує скрипт `prepare`
@@ -135,6 +135,10 @@ CI перевіряє це кроком «Package is importable after install».
 
 Ці зміни зачіпають рішення `failed`/`rejected` і підписи в UI (див. «Причини формату дня»).
 
+`#v0.3.1` — лише швидкодія: звіт `load` будується без квадратичного пошуку груп вчителів
+(найбільший допустимий вхід — десятки мілісекунд замість 6–9 с). Вердикт, коди й `load` побайтово ті самі,
+що в `0.3.0`; змінюється тільки `meta.validator_version`.
+
 ## Розробка
 
 Потрібен Node 24. `@lad/contracts` підключено git-залежністю на тег (`v0.3.0`); lock-файл фіксує коміт.
@@ -143,10 +147,11 @@ CI перевіряє це кроком «Package is importable after install».
 npm install
 npm run check     # lint, typecheck, tests with coverage, build
 npm run mutation  # Stryker mutation testing, ~6 min; report in reports/mutation/index.html
+npm run build && node scripts/bench-load.mjs  # timings of buildLoad/validate, manual, not in CI
 ```
 
 Мутаційне тестування (Stryker) обов'язкове перед релізом: CI запускає його на тегах `v*`, раз на тиждень і вручну
-(workflow `mutation`). Поріг — 80 % убитих мутантів, на 0.3.0 — 100 %. Еквівалентні мутанти позначено в коді
+(workflow `mutation`). Поріг — 80 % убитих мутантів, на 0.3.1 — 100 %. Еквівалентні мутанти позначено в коді
 коментарем `// Stryker disable … : причина`.
 
 Схеми копіюються з `@lad/contracts` у `src/generated/` (`npm run sync-schemas`, автоматично перед тестами й збіркою)
