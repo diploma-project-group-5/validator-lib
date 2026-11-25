@@ -165,7 +165,7 @@ $ echo $?
 так само як сама бібліотека підключає `@lad/contracts`:
 
 ```json
-"@lad/validator-lib": "git+https://github.com/diploma-project-group-5/validator-lib.git#v0.4.0"
+"@lad/validator-lib": "git+https://github.com/diploma-project-group-5/validator-lib.git#v0.4.1"
 ```
 
 `dist/` не зберігається в git. Під час встановлення з git npm сам виконує скрипт `prepare`
@@ -184,6 +184,10 @@ CI перевіряє це кроком «Package is importable after install».
 
 `#v0.4.0` — новий режим CLI `--mode new-conflicts` (пакетна перевірка заміни, див. «CLI») і клас
 `SnapshotMismatchError`. Режим за замовчуванням, вердикти й коди ті самі, що в `0.3.1`.
+
+`#v0.4.1` — лише залежність `@lad/contracts` `#v0.5.0` замість `#v0.3.0`: схеми, за якими перевіряє
+бібліотека, змінились тільки описами, тож вердикти й коди ті самі, що в `0.4.0`; `meta.contracts_version` і
+`--version` тепер показують `0.5.0`.
 
 ## Розробка
 
